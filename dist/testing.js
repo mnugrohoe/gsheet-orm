@@ -1,5 +1,5 @@
 // src/testing.ts
-var MemoryDriver = class {
+const MemoryDriver = class {
   kind;
   dateFormat;
   header = [];

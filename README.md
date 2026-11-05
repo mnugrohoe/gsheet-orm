@@ -15,7 +15,7 @@ Node 18+. Server-side only (it uses a service account). Works well in Next.js ro
 import { GSheetDB, type InferRow } from "gsheet-orm";
 
 export const db = new GSheetDB({
-  spreadsheetId: process.env.SHEET_ID!,
+  spreadsheetId: process.env.SHEET_ID!,   // default spreadsheet, optional if every model sets its own
   // reads GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY by default
 });
 
@@ -48,7 +48,7 @@ await Item.delete({ status: "retired" }); // returns how many rows were removed
 ### Setup
 
 1. Create a Google Cloud service account and enable the Google Sheets API.
-2. Share your spreadsheet with the service account email (Editor).
+2. Share your spreadsheet (every spreadsheet, if you shard) with the service account email (Editor).
 3. Set `GOOGLE_SERVICE_ACCOUNT_EMAIL` and `GOOGLE_PRIVATE_KEY` (literal `\n` in the key is handled), or pass `credentials` / `auth` to `GSheetDB`.
 
 ## Table first, sheet as fallback
@@ -84,6 +84,81 @@ If `source` is `"table"` and the tab already holds data but has no table, it thr
 
 Dates are written and read as UTC.
 
+## One model over many spreadsheets (sharding)
+
+If you split a table over several spreadsheets, for example one per year range, declare it once and the library routes everything for you.
+
+```ts
+export const Orders = db.sharded("orders", {
+  orderNo:    { type: "string", required: true, unique: true },
+  customerId: "string",
+  date:       { type: "date", required: true },   // the field the rows are split by
+  total:      { type: "number", default: 0 },
+}, {
+  partitionBy: "date",
+  shards: [
+    { spreadsheetId: process.env.SS_2022_2023!, years: [2022, 2023] },
+    { spreadsheetId: process.env.SS_2024!,      years: [2024, 2024] },
+    { spreadsheetId: process.env.SS_2025!,      years: [2025, null] },   // null = open-ended
+  ],
+});
+```
+
+It has the same methods as a normal model (`findMany`, `create`, `update`, `upsert`, `delete`, ...).
+
+| Operation | What happens |
+|---|---|
+| `create` / `createMany` | Each row goes to the spreadsheet whose range contains its `date`. No match throws `SHARD`. |
+| `findMany` / `count` / `update` / `delete` | Only spreadsheets that can match the `where` on the partition field are read (`eq`, `in`, `gt`, `gte`, `lt`, `lte`). No filter on that field means all of them. |
+| `findMany` across several | Results are merged, then sorted, offset and limited as a whole. Without `orderBy` you get range order. |
+| `findById(id, hint?)` | An id says nothing about the year, so it scans newest to oldest. Pass a date as `hint` to read one spreadsheet. |
+| `update` of the partition field | The row moves to the spreadsheet that now owns it (inserted first, deleted after, so a failure leaves a duplicate and not a loss). `id` and `createdAt` are kept. |
+
+Ranges use `years: [from, to]` (whole years, inclusive, UTC) for date fields, or `from` / `to` (to is exclusive) for dates and numbers. Ranges must not overlap. Gaps are allowed.
+
+Each spreadsheet resolves its own storage, so a 2022 spreadsheet that is still a plain tab and a 2025 spreadsheet that uses a Table work side by side. Use `Orders.sources` to see what each one picked and `Orders.shardsFor(where)` to see which spreadsheets a query would touch.
+
+Per-shard overrides: `{ table: "orders_2024", sheet: "Orders 2024" }`. Parallel reads are capped by `concurrency` (default 4).
+
+Things sharding does not do:
+- **No cross-spreadsheet transactions.** If `createMany` succeeds in one spreadsheet and fails in another, the first insert stays.
+- **`unique` is checked inside one spreadsheet only**, not across all of them.
+
+## Joins
+
+`join` works between any two models, including a sharded model and a plain one on a different spreadsheet.
+
+```ts
+const Customers = db.model("customers", { name: "string", tier: "string" }, { spreadsheetId: process.env.SS_MASTER });
+
+// many-to-one: each order gets its customer (or null)
+const rows = await Orders.join(Customers, {
+  on: ["customerId", "id"],       // [left field, right field]
+  as: "customer",
+  where: { date: { gte: new Date("2025-01-01") } },   // prunes shards on the left
+  orderBy: { field: "date", dir: "desc" },
+  limit: 50,
+});
+rows[0].customer?.name;
+
+// inner join: unmatched rows are dropped and `customer` is typed non-null
+await Orders.join(Customers, { on: ["customerId", "id"], as: "customer", type: "inner" });
+
+// one-to-many: each customer gets all their orders from every year
+await Customers.join(Orders, { on: ["id", "customerId"], as: "orders", many: true });
+```
+
+- It reads the left side first, then only the right rows whose key appears on the left.
+- Filter the right side with `rightWhere`.
+- The same function is available standalone: `import { join } from "gsheet-orm"`.
+- If the right side is sharded on the field you join on, only the needed spreadsheets are read.
+- Without `many: true`, a left row with several matches gets the first one.
+- It is an in-memory hash join, so the same size limits as the rest of the library apply.
+
+## Moving rows yourself
+
+`model.importMany(rows)` inserts rows as given, keeping `id`, `createdAt` and `updatedAt`. Use it to back-fill a new spreadsheet or to split an old table into shards.
+
 ## Schema
 
 Fields are `"string" | "number" | "boolean" | "date" | "json"` or `{ type, required?, unique?, default?, enum? }`. `id` (uuid), `createdAt` and `updatedAt` are added automatically and are reserved names.
@@ -105,6 +180,8 @@ Fields are `"string" | "number" | "boolean" | "date" | "json"` or `{ type, requi
 | `update(where, data)` / `updateById(id, data)` | `Row[]` / `Row \| null` |
 | `upsert(where, data)` | `Row` |
 | `delete(where)` / `deleteById(id)` | `number` / `boolean` |
+| `join(other, options)` | joined rows |
+| `importMany(rows)` | `Row[]`, keeps id and timestamps |
 | `sync()` | `void` (runs automatically) |
 
 `where` accepts equality, operators (`eq ne gt gte lt lte in notIn contains startsWith endsWith`), or a predicate `(row) => boolean`.
@@ -113,6 +190,7 @@ Fields are `"string" | "number" | "boolean" | "date" | "json"` or `{ type, requi
 
 ```ts
 db.model(name, schema, {
+  spreadsheetId,           // overrides the default one for this model
   source: "auto",          // "auto" | "table" | "sheet"
   table, sheet,            // names, default: model name
   create: true,            // create tab/table when missing
@@ -122,7 +200,7 @@ db.model(name, schema, {
 });
 ```
 
-Errors are `GSheetError` with `code`: `CONFIG | SCHEMA | VALIDATION | UNIQUE | API`. Requests are retried with backoff on 429 and 5xx.
+Errors are `GSheetError` with `code`: `CONFIG | SCHEMA | VALIDATION | UNIQUE | SHARD | API`. Requests are retried with backoff on 429 and 5xx.
 
 ## Testing your app
 
@@ -130,11 +208,17 @@ Errors are `GSheetError` with `code`: `CONFIG | SCHEMA | VALIDATION | UNIQUE | A
 import { MemoryDriver } from "gsheet-orm/testing";
 
 const Item = db.model("items", schema, { driver: new MemoryDriver({ kind: "table" }) });
+
+// sharded: give every shard its own driver
+db.sharded("orders", schema, {
+  partitionBy: "date",
+  shards: [{ spreadsheetId: "a", years: [2024, 2024], driver: new MemoryDriver() }],
+});
 ```
 
 ## Limits to know about
 
-- Every read loads the whole table or tab and filters in memory. That is fine for thousands of rows. Mind the Sheets API quota (about 60 reads per minute per user), and use `cache` for read-heavy pages.
+- Every read loads the whole table or tab (of each spreadsheet it touches) and filters in memory. That is fine for thousands of rows. Mind the Sheets API quota (about 60 reads per minute per user), and use `cache` for read-heavy pages.
 - There are no transactions or locks. Concurrent writers can race, and `unique` is checked against the latest read only.
 - Writes always read first to find the right rows, so each update or delete is at least two API calls.
 

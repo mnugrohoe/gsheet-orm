@@ -1,13 +1,13 @@
 "use strict";
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
+const __defProp = Object.defineProperty;
+const __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+const __getOwnPropNames = Object.getOwnPropertyNames;
+const __hasOwnProp = Object.prototype.hasOwnProperty;
+const __export = (target, all) => {
+  for (const name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except, desc) => {
+const __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
@@ -15,26 +15,28 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+const __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/index.ts
-var src_exports = {};
+const src_exports = {};
 __export(src_exports, {
   GSheetDB: () => GSheetDB,
   GSheetError: () => GSheetError,
   Model: () => Model,
+  ShardedModel: () => ShardedModel,
   SheetDriver: () => SheetDriver,
   SheetsApi: () => SheetsApi,
   TableDriver: () => TableDriver,
+  join: () => join,
   resolveDriver: () => resolveDriver
 });
 module.exports = __toCommonJS(src_exports);
 
 // src/client.ts
-var import_sheets = require("@googleapis/sheets");
+const import_sheets = require("@googleapis/sheets");
 
 // src/errors.ts
-var GSheetError = class extends Error {
+const GSheetError = class extends Error {
   code;
   constructor(code, message, options) {
     super(message, options);
@@ -44,52 +46,56 @@ var GSheetError = class extends Error {
 };
 
 // src/client.ts
-var RETRYABLE = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504]);
+const RETRYABLE = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504]);
 function statusOf(err) {
   const s = err?.response?.status ?? err?.status ?? err?.code;
   return typeof s === "number" ? s : typeof s === "string" && /^\d+$/.test(s) ? Number(s) : void 0;
 }
-var toGridRange = (r, sheetId) => ({
+function lazySheets(opts) {
+  let api;
+  return () => {
+    if (api) return api;
+    let authClient = opts.auth;
+    if (!authClient) {
+      const email = opts.credentials?.clientEmail ?? process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+      const key = (opts.credentials?.privateKey ?? process.env.GOOGLE_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+      if (!email || !key) {
+        throw new GSheetError(
+          "CONFIG",
+          "Missing Google credentials. Pass `credentials`/`auth`, or set GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY."
+        );
+      }
+      authClient = new import_sheets.auth.JWT({
+        email,
+        key,
+        scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+      });
+    }
+    api = (0, import_sheets.sheets)({ version: "v4", auth: authClient });
+    return api;
+  };
+}
+const toGridRange = (r, sheetId) => ({
   sheetId,
   startRowIndex: r?.startRowIndex ?? 0,
   endRowIndex: r?.endRowIndex ?? 0,
   startColumnIndex: r?.startColumnIndex ?? 0,
   endColumnIndex: r?.endColumnIndex ?? 0
 });
-var SheetsApi = class {
-  constructor(opts) {
-    this.opts = opts;
+const SheetsApi = class {
+  spreadsheetId;
+  getSheets;
+  retries;
+  baseDelayMs;
+  constructor(opts, shared) {
     this.spreadsheetId = opts.spreadsheetId;
+    this.getSheets = shared ?? lazySheets(opts);
     const r = opts.retry === false ? { retries: 0 } : opts.retry ?? {};
     this.retries = r.retries ?? 4;
     this.baseDelayMs = r.baseDelayMs ?? 500;
   }
-  opts;
-  spreadsheetId;
-  _api;
-  retries;
-  baseDelayMs;
   get api() {
-    if (!this._api) {
-      let authClient = this.opts.auth;
-      if (!authClient) {
-        const email = this.opts.credentials?.clientEmail ?? process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const key = (this.opts.credentials?.privateKey ?? process.env.GOOGLE_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
-        if (!email || !key) {
-          throw new GSheetError(
-            "CONFIG",
-            "Missing Google credentials. Pass `credentials`/`auth`, or set GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY."
-          );
-        }
-        authClient = new import_sheets.auth.JWT({
-          email,
-          key,
-          scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-        });
-      }
-      this._api = (0, import_sheets.sheets)({ version: "v4", auth: authClient });
-    }
-    return this._api;
+    return this.getSheets();
   }
   async call(fn) {
     for (let attempt = 0; ; attempt++) {
@@ -182,13 +188,13 @@ var SheetsApi = class {
 };
 
 // src/model.ts
-var import_node_crypto = require("crypto");
+const import_node_crypto = require("crypto");
 
 // src/codec.ts
-var EPOCH_OFFSET_DAYS = 25569;
-var MS_PER_DAY = 864e5;
-var dateToSerial = (d) => d.getTime() / MS_PER_DAY + EPOCH_OFFSET_DAYS;
-var serialToDate = (n) => new Date(Math.round((n - EPOCH_OFFSET_DAYS) * MS_PER_DAY));
+const EPOCH_OFFSET_DAYS = 25569;
+const MS_PER_DAY = 864e5;
+const dateToSerial = (d) => d.getTime() / MS_PER_DAY + EPOCH_OFFSET_DAYS;
+const serialToDate = (n) => new Date(Math.round((n - EPOCH_OFFSET_DAYS) * MS_PER_DAY));
 function serialize(value, type, dateFormat) {
   if (value === null || value === void 0) return null;
   switch (type) {
@@ -240,10 +246,10 @@ function colLetter(n) {
   }
   return s;
 }
-var quoteSheet = (title) => `'${title.replace(/'/g, "''")}'`;
+const quoteSheet = (title) => `'${title.replace(/'/g, "''")}'`;
 
 // src/drivers/sheet.ts
-var SheetDriver = class {
+const SheetDriver = class {
   constructor(api, cfg) {
     this.api = api;
     this.cfg = cfg;
@@ -325,7 +331,7 @@ var SheetDriver = class {
 };
 
 // src/drivers/table.ts
-var COLUMN_TYPE = {
+const COLUMN_TYPE = {
   string: "TEXT",
   number: "DOUBLE",
   boolean: "BOOLEAN",
@@ -347,8 +353,8 @@ function columnProperty(c, index) {
     } : {}
   };
 }
-var cellData = (v) => v === null ? {} : typeof v === "number" ? { userEnteredValue: { numberValue: v } } : typeof v === "boolean" ? { userEnteredValue: { boolValue: v } } : { userEnteredValue: { stringValue: v } };
-var TableDriver = class {
+const cellData = (v) => v === null ? {} : typeof v === "number" ? { userEnteredValue: { numberValue: v } } : typeof v === "boolean" ? { userEnteredValue: { boolValue: v } } : { userEnteredValue: { stringValue: v } };
+const TableDriver = class {
   constructor(api, cfg) {
     this.api = api;
     this.cfg = cfg;
@@ -557,7 +563,7 @@ async function resolveDriver(api, spec) {
 }
 
 // src/query.ts
-var OP_KEYS = /* @__PURE__ */ new Set([
+const OP_KEYS = /* @__PURE__ */ new Set([
   "eq",
   "ne",
   "gt",
@@ -570,10 +576,10 @@ var OP_KEYS = /* @__PURE__ */ new Set([
   "startsWith",
   "endsWith"
 ]);
-var isOperator = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date) && Object.keys(v).length > 0 && Object.keys(v).every((k) => OP_KEYS.has(k));
-var norm = (v) => v instanceof Date ? v.getTime() : v;
-var comparable = (a, b) => a != null && b != null && typeof a === typeof b;
-var str = (v) => String(v ?? "").toLowerCase();
+const isOperator = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date) && Object.keys(v).length > 0 && Object.keys(v).every((k) => OP_KEYS.has(k));
+const norm = (v) => v instanceof Date ? v.getTime() : v;
+const comparable = (a, b) => a != null && b != null && typeof a === typeof b;
+const str = (v) => String(v ?? "").toLowerCase();
 function matches(row, where) {
   if (!where) return true;
   if (typeof where === "function") return where(row);
@@ -614,10 +620,52 @@ function sortRows(rows, orderBy) {
     return 0;
   });
 }
+function toKey(v, type) {
+  if (v === null || v === void 0 || v === "") return null;
+  const n = v instanceof Date ? v.getTime() : type === "date" ? new Date(v).getTime() : Number(v);
+  return Number.isNaN(n) ? null : n;
+}
+
+// src/join.ts
+async function join(left, right, opts) {
+  const [lk, rk] = opts.on;
+  const type = opts.type ?? "left";
+  const leftRows = await left.findMany({ where: opts.where, orderBy: opts.orderBy });
+  if (leftRows.length && opts.as in leftRows[0]) {
+    throw new GSheetError("VALIDATION", `join: "${opts.as}" collides with a field of the left model`);
+  }
+  const keys = [...new Set(leftRows.map((r) => norm(r[lk])).filter((k) => k != null))];
+  const groups = /* @__PURE__ */ new Map();
+  if (keys.length) {
+    const keySet = new Set(keys);
+    const where = opts.rightWhere ? (row) => keySet.has(norm(row[rk])) && matches(row, opts.rightWhere) : { [rk]: { in: keys } };
+    for (const r of await right.findMany({ where })) {
+      const k = norm(r[rk]);
+      if (k == null) continue;
+      const list = groups.get(k);
+      list ? list.push(r) : groups.set(k, [r]);
+    }
+  }
+  const out = [];
+  for (const l of leftRows) {
+    const lkVal = norm(l[lk]);
+    const found = lkVal == null ? [] : groups.get(lkVal) ?? [];
+    if (opts.many) {
+      if (!found.length && type === "inner") continue;
+      out.push({ ...l, [opts.as]: [...found] });
+    } else {
+      const first = found[0] ?? null;
+      if (!first && type === "inner") continue;
+      out.push({ ...l, [opts.as]: first });
+    }
+  }
+  const start = opts.offset ?? 0;
+  return out.slice(start, opts.limit != null ? start + opts.limit : void 0);
+}
 
 // src/model.ts
-var RESERVED = ["id", "createdAt", "updatedAt"];
-var Model = class {
+const RESERVED = ["id", "createdAt", "updatedAt"];
+const Model = class {
   constructor(name, schema, opts, getApi) {
     this.name = name;
     this.opts = opts;
@@ -748,9 +796,10 @@ var Model = class {
       throw new GSheetError("VALIDATION", `[${this.name}] "${key}" is required`);
     }
   }
-  assertKnown(input, allowId) {
+  assertKnown(input, allowId, allowTimestamps = false) {
     for (const k of Object.keys(input)) {
-      if (!(k in this.fields) && !(allowId && k === "id")) {
+      const ok = k in this.fields || allowId && k === "id" || allowTimestamps && (k === "createdAt" || k === "updatedAt");
+      if (!ok) {
         throw new GSheetError("VALIDATION", `[${this.name}] unknown field "${k}"`);
       }
     }
@@ -774,7 +823,7 @@ var Model = class {
   }
   /* ------------------------------ read ------------------------------ */
   async findMany(opts = {}) {
-    const rows = (await this.load()).map((l) => l.row).filter((r) => matches(r, opts.where));
+    const rows = (await this.load(opts.fresh)).map((l) => l.row).filter((r) => matches(r, opts.where));
     const sorted = sortRows(rows, opts.orderBy);
     const start = opts.offset ?? 0;
     const end = opts.limit != null ? start + opts.limit : void 0;
@@ -794,12 +843,22 @@ var Model = class {
     return (await this.createMany([data]))[0];
   }
   async createMany(items) {
+    return this.insert(items, false);
+  }
+  /**
+   * Inserts rows as they are, keeping their id / createdAt / updatedAt when given.
+   * Use it to move or back-fill rows (for example when splitting a table into shards).
+   */
+  async importMany(rows) {
+    return this.insert(rows, true);
+  }
+  async insert(items, keepSystem) {
     if (!items.length) return [];
     await this.sync();
     const now = /* @__PURE__ */ new Date();
     const records = items.map((item) => {
       const input = item;
-      this.assertKnown(input, true);
+      this.assertKnown(input, true, keepSystem);
       const rec = {};
       for (const [key, def] of Object.entries(this.fields)) {
         let v = input[key];
@@ -810,8 +869,8 @@ var Model = class {
         this.requireValue(key, def, rec[key]);
       }
       rec.id = input.id ?? (0, import_node_crypto.randomUUID)();
-      rec.createdAt = now;
-      rec.updatedAt = now;
+      rec.createdAt = keepSystem && input.createdAt ? new Date(input.createdAt) : now;
+      rec.updatedAt = keepSystem && input.updatedAt ? new Date(input.updatedAt) : now;
       return rec;
     });
     this.assertUnique(records, await this.load(true));
@@ -869,20 +928,307 @@ var Model = class {
   async deleteById(id) {
     return await this.delete({ id }) > 0;
   }
+  /* ------------------------------ join ------------------------------ */
+  /** Joins this model with another one (also across spreadsheets). See `join`. */
+  join(other, opts) {
+    return join(this, other, opts);
+  }
+};
+
+// src/util.ts
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, worker));
+  return out;
+}
+
+// src/sharded.ts
+const contains = (s, k) => (s.from === void 0 || k >= s.from) && (s.to === void 0 || k < s.to);
+const ShardedModel = class {
+  constructor(name, schema, opts, getApi) {
+    this.name = name;
+    const { partitionBy, shards, concurrency, ...modelOpts } = opts;
+    const def = schema[partitionBy];
+    const type = typeof def === "string" ? def : def?.type;
+    if (type !== "date" && type !== "number") {
+      throw new GSheetError("SCHEMA", `[${name}] partitionBy "${partitionBy}" must be a "date" or "number" field in the schema`);
+    }
+    if (!shards.length) throw new GSheetError("SCHEMA", `[${name}] at least one shard is required`);
+    this.field = partitionBy;
+    this.fieldType = type;
+    this.limit = concurrency ?? 4;
+    const bound = (v, what) => {
+      if (v === void 0) return void 0;
+      const k = toKey(v, type);
+      if (k === null) throw new GSheetError("SCHEMA", `[${name}] invalid shard ${what}: ${String(v)}`);
+      return k;
+    };
+    this.shards = shards.map((sd) => {
+      let from = bound(sd.from, "from");
+      let to = bound(sd.to, "to");
+      if (sd.years) {
+        if (type !== "date") throw new GSheetError("SCHEMA", `[${name}] "years" needs a date partition field`);
+        const [y1, y2] = sd.years;
+        from = Date.UTC(y1, 0, 1);
+        to = y2 === null ? void 0 : Date.UTC(y2 + 1, 0, 1);
+      }
+      const label = sd.label ?? sd.spreadsheetId;
+      const model = new Model(
+        name,
+        schema,
+        { ...modelOpts, table: sd.table ?? modelOpts.table, sheet: sd.sheet ?? modelOpts.sheet, driver: sd.driver },
+        () => getApi(sd.spreadsheetId)
+      );
+      return { spreadsheetId: sd.spreadsheetId, label, from, to, model };
+    }).sort((a, b) => (a.from ?? -Infinity) - (b.from ?? -Infinity));
+    for (let i = 0; i < this.shards.length; i++) {
+      const s = this.shards[i];
+      if (s.from !== void 0 && s.to !== void 0 && s.from >= s.to) {
+        throw new GSheetError("SCHEMA", `[${name}] shard "${s.label}" has an empty range`);
+      }
+      const next = this.shards[i + 1];
+      if (next && (s.to === void 0 || s.to > (next.from ?? -Infinity))) {
+        throw new GSheetError("SCHEMA", `[${name}] shards "${s.label}" and "${next.label}" overlap`);
+      }
+    }
+  }
+  name;
+  shards;
+  field;
+  fieldType;
+  limit;
+  /* ------------------------------ routing ------------------------------ */
+  key(v) {
+    return toKey(v, this.fieldType);
+  }
+  shardFor(value) {
+    const k = this.key(value);
+    if (k === null) throw new GSheetError("VALIDATION", `[${this.name}] "${this.field}" is required to pick a spreadsheet`);
+    const shard = this.shards.find((s) => contains(s, k));
+    if (!shard) {
+      const shown = value instanceof Date ? value.toISOString() : String(value);
+      throw new GSheetError("SHARD", `[${this.name}] no spreadsheet covers ${this.field}=${shown}`);
+    }
+    return shard;
+  }
+  pick(where) {
+    if (!where || typeof where === "function") return this.shards;
+    const cond = where[this.field];
+    if (cond === void 0) return this.shards;
+    const checks = [];
+    if (!isOperator(cond)) {
+      const k = this.key(cond);
+      if (k === null) return this.shards;
+      checks.push((s) => contains(s, k));
+    } else {
+      const c = cond;
+      const num = (v) => this.key(v);
+      if (c.eq !== void 0 && num(c.eq) !== null) {
+        const k = num(c.eq);
+        checks.push((s) => contains(s, k));
+      }
+      if (Array.isArray(c.in)) {
+        const ks = c.in.map(num);
+        if (ks.every((k) => k !== null)) checks.push((s) => ks.some((k) => contains(s, k)));
+      }
+      for (const op of ["gt", "gte"]) {
+        const k = c[op] === void 0 ? null : num(c[op]);
+        if (k !== null) checks.push((s) => s.to === void 0 || k < s.to);
+      }
+      for (const op of ["lt", "lte"]) {
+        const k = c[op] === void 0 ? null : num(c[op]);
+        if (k !== null) {
+          checks.push((s) => s.from === void 0 || (op === "lte" ? k >= s.from : k > s.from));
+        }
+      }
+    }
+    return checks.length ? this.shards.filter((s) => checks.every((f) => f(s))) : this.shards;
+  }
+  /** Which spreadsheets a query with this `where` would touch. Handy to check pruning. */
+  shardsFor(where) {
+    return this.pick(where).map(({ spreadsheetId, label }) => ({ spreadsheetId, label }));
+  }
+  /** "table" or "sheet" for each spreadsheet, in range order (undefined until connected). */
+  get sources() {
+    return this.shards.map((s) => ({ label: s.label, source: s.model.source }));
+  }
+  /** Connects every spreadsheet (creates missing tabs/tables, adds missing columns). */
+  async sync() {
+    await mapLimit(this.shards, this.limit, (s) => s.model.sync());
+  }
+  /* ------------------------------ read ------------------------------ */
+  async findMany(opts = {}) {
+    const shards = this.pick(opts.where);
+    if (shards.length === 1) return shards[0].model.findMany(opts);
+    const lists = await mapLimit(
+      shards,
+      this.limit,
+      (s) => s.model.findMany({ where: opts.where, fresh: opts.fresh })
+    );
+    const merged = sortRows(lists.flat(), opts.orderBy);
+    const start = opts.offset ?? 0;
+    return merged.slice(start, opts.limit != null ? start + opts.limit : void 0);
+  }
+  async findFirst(where) {
+    for (const s of this.pick(where)) {
+      const row = await s.model.findFirst(where);
+      if (row) return row;
+    }
+    return null;
+  }
+  /** Scans newest to oldest. Pass a partition value as `hint` to read a single spreadsheet. */
+  findById(id, hint) {
+    return this.findByIdIn(id, hint).then((r) => r?.row ?? null);
+  }
+  async findByIdIn(id, hint) {
+    const candidates = hint !== void 0 ? [this.shardFor(hint)] : [...this.shards].reverse();
+    for (const shard of candidates) {
+      const row = await shard.model.findById(id);
+      if (row) return { shard, row };
+    }
+    return null;
+  }
+  async count(where) {
+    const counts = await mapLimit(this.pick(where), this.limit, (s) => s.model.count(where));
+    return counts.reduce((a, b) => a + b, 0);
+  }
+  /* ------------------------------ create ------------------------------ */
+  async create(data) {
+    return (await this.createMany([data]))[0];
+  }
+  /**
+   * Routes each item to its spreadsheet. Spreadsheets cannot share a transaction, so if one
+   * spreadsheet fails after another succeeded, the earlier inserts stay.
+   */
+  async createMany(items) {
+    const groups = /* @__PURE__ */ new Map();
+    items.forEach((item, index) => {
+      const shard = this.shardFor(item[this.field]);
+      const list = groups.get(shard);
+      list ? list.push({ index, item }) : groups.set(shard, [{ index, item }]);
+    });
+    const out = new Array(items.length);
+    await mapLimit([...groups], this.limit, async ([shard, list]) => {
+      const rows = await shard.model.createMany(list.map((l) => l.item));
+      rows.forEach((row, i) => out[list[i].index] = row);
+    });
+    return out;
+  }
+  /* ------------------------------ update ------------------------------ */
+  async update(where, data) {
+    return this.updateIn(this.pick(where), where, data);
+  }
+  async updateById(id, data, hint) {
+    const found = await this.findByIdIn(id, hint);
+    if (!found) return null;
+    return (await this.updateIn([found.shard], { id }, data))[0] ?? null;
+  }
+  /**
+   * Updating the partition field moves the row to the spreadsheet that now owns it:
+   * it is inserted there first and deleted from the old one afterwards, so a failure
+   * leaves a duplicate rather than losing data.
+   */
+  async updateIn(shards, where, data) {
+    const patch = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== void 0));
+    if (!(this.field in patch)) {
+      const lists = await mapLimit(shards, this.limit, (s) => s.model.update(where, patch));
+      return lists.flat();
+    }
+    const target = this.shardFor(patch[this.field]);
+    const ordered = [...shards].sort((a, b) => Number(b === target) - Number(a === target));
+    const results = [];
+    for (const shard of ordered) {
+      if (shard === target) {
+        results.push(...await shard.model.update(where, patch));
+        continue;
+      }
+      const rows = await shard.model.findMany({ where, fresh: true });
+      if (!rows.length) continue;
+      const ids = new Set(rows.map((r) => r.id));
+      const now = /* @__PURE__ */ new Date();
+      const moved = await target.model.importMany(
+        rows.map((r) => ({ ...r, ...patch, updatedAt: now }))
+      );
+      await shard.model.delete(((row) => ids.has(row.id)));
+      results.push(...moved);
+    }
+    return results;
+  }
+  async upsert(where, data) {
+    for (const shard of this.pick(where)) {
+      const [found] = await shard.model.findMany({ where, limit: 1, fresh: true });
+      if (found) {
+        const { id: _ignored, ...rest } = data;
+        return (await this.updateIn([shard], { id: found.id }, rest))[0];
+      }
+    }
+    return this.create(data);
+  }
+  /* ------------------------------ delete ------------------------------ */
+  async delete(where) {
+    const counts = await mapLimit(this.pick(where), this.limit, (s) => s.model.delete(where));
+    return counts.reduce((a, b) => a + b, 0);
+  }
+  async deleteById(id, hint) {
+    const found = await this.findByIdIn(id, hint);
+    return found ? found.shard.model.deleteById(id) : false;
+  }
+  /* ------------------------------ join ------------------------------ */
+  /** Joins with another model. The other side can be sharded too. See `join`. */
+  join(other, opts) {
+    return join(this, other, opts);
+  }
 };
 
 // src/db.ts
-var GSheetDB = class {
-  api;
-  constructor(opts) {
-    this.api = new SheetsApi(opts);
+const GSheetDB = class {
+  constructor(opts = {}) {
+    this.opts = opts;
+    this.getSheets = lazySheets(opts);
+  }
+  opts;
+  apis = /* @__PURE__ */ new Map();
+  getSheets;
+  /** API handle for one spreadsheet. All spreadsheets share a single Google login. */
+  apiFor(spreadsheetId) {
+    let api = this.apis.get(spreadsheetId);
+    if (!api) {
+      api = new SheetsApi({ ...this.opts, spreadsheetId }, this.getSheets);
+      this.apis.set(spreadsheetId, api);
+    }
+    return api;
+  }
+  /** API handle for the default spreadsheet. */
+  get api() {
+    if (!this.opts.spreadsheetId) {
+      throw new GSheetError("CONFIG", "No default spreadsheetId. Pass one to GSheetDB or to the model.");
+    }
+    return this.apiFor(this.opts.spreadsheetId);
   }
   /**
    * Define a model. By default it binds to a Sheets Table named `name`, falls back to a tab
    * named `name`, and creates a new tab + Table when neither exists.
    */
   model(name, schema, opts = {}) {
-    return new Model(name, schema, opts, () => this.api);
+    const id = opts.spreadsheetId ?? this.opts.spreadsheetId;
+    return new Model(name, schema, opts, () => {
+      if (!id) throw new GSheetError("CONFIG", `[${name}] no spreadsheetId. Pass one to GSheetDB or to the model.`);
+      return this.apiFor(id);
+    });
+  }
+  /**
+   * A model whose rows are split over several spreadsheets by a date or number field
+   * (for example one spreadsheet per year range). Reads and writes are routed automatically.
+   */
+  sharded(name, schema, opts) {
+    return new ShardedModel(name, schema, opts, (id) => this.apiFor(id));
   }
 };
 // Annotate the CommonJS export names for ESM import in node:
@@ -890,9 +1236,11 @@ var GSheetDB = class {
   GSheetDB,
   GSheetError,
   Model,
+  ShardedModel,
   SheetDriver,
   SheetsApi,
   TableDriver,
+  join,
   resolveDriver
 });
 //# sourceMappingURL=index.cjs.map
