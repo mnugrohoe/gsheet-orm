@@ -1,13 +1,13 @@
 "use strict";
-const __defProp = Object.defineProperty;
-const __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-const __getOwnPropNames = Object.getOwnPropertyNames;
-const __hasOwnProp = Object.prototype.hasOwnProperty;
-const __export = (target, all) => {
-  for (const name in all)
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-const __copyProps = (to, from, except, desc) => {
+var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
@@ -15,15 +15,15 @@ const __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-const __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/testing.ts
-const testing_exports = {};
+var testing_exports = {};
 __export(testing_exports, {
   MemoryDriver: () => MemoryDriver
 });
 module.exports = __toCommonJS(testing_exports);
-const MemoryDriver = class {
+var MemoryDriver = class {
   kind;
   dateFormat;
   header = [];

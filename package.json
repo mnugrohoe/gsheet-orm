@@ -1,5 +1,5 @@
 {
-  "name": "gsheet-orm",
+  "name": "#mnugrohoe/gsheet-orm",
   "version": "0.2.0",
   "description": "Typed ORM for Google Sheets. Tables first, plain tabs as fallback, shard one model over many spreadsheets, join across them.",
   "keywords": [
@@ -51,6 +51,14 @@
   "engines": {
     "node": ">=18"
   },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
   "dependencies": {
     "@googleapis/sheets": "^18.1.2"
   },
@@ -60,11 +68,9 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
