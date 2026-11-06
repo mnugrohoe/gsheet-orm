@@ -1,7 +1,17 @@
 import type { OrderBy, Where } from "./types.js";
 
 const OP_KEYS = new Set([
-  "eq", "ne", "gt", "gte", "lt", "lte", "in", "notIn", "contains", "startsWith", "endsWith",
+  "eq",
+  "ne",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "in",
+  "notIn",
+  "contains",
+  "startsWith",
+  "endsWith",
 ]);
 
 export const isOperator = (v: unknown): v is Record<string, any> =>
@@ -12,7 +22,8 @@ export const isOperator = (v: unknown): v is Record<string, any> =>
   Object.keys(v).length > 0 &&
   Object.keys(v).every((k) => OP_KEYS.has(k));
 
-export const norm = (v: unknown): unknown => (v instanceof Date ? v.getTime() : v);
+export const norm = (v: unknown): unknown =>
+  v instanceof Date ? v.getTime() : v;
 
 const comparable = (a: unknown, b: unknown): boolean =>
   a != null && b != null && typeof a === typeof b;
@@ -33,20 +44,47 @@ export function matches<R extends object>(row: R, where?: Where<R>): boolean {
 
     if ("eq" in cond && val !== norm(cond.eq)) return false;
     if ("ne" in cond && val === norm(cond.ne)) return false;
-    if ("gt" in cond && !(comparable(val, norm(cond.gt)) && val > (norm(cond.gt) as any))) return false;
-    if ("gte" in cond && !(comparable(val, norm(cond.gte)) && val >= (norm(cond.gte) as any))) return false;
-    if ("lt" in cond && !(comparable(val, norm(cond.lt)) && val < (norm(cond.lt) as any))) return false;
-    if ("lte" in cond && !(comparable(val, norm(cond.lte)) && val <= (norm(cond.lte) as any))) return false;
-    if (cond.in && !(cond.in as unknown[]).map(norm).includes(val)) return false;
-    if (cond.notIn && (cond.notIn as unknown[]).map(norm).includes(val)) return false;
-    if (cond.contains !== undefined && !str(val).includes(str(cond.contains))) return false;
-    if (cond.startsWith !== undefined && !str(val).startsWith(str(cond.startsWith))) return false;
-    if (cond.endsWith !== undefined && !str(val).endsWith(str(cond.endsWith))) return false;
+    if (
+      "gt" in cond &&
+      !(comparable(val, norm(cond.gt)) && val > (norm(cond.gt) as any))
+    )
+      return false;
+    if (
+      "gte" in cond &&
+      !(comparable(val, norm(cond.gte)) && val >= (norm(cond.gte) as any))
+    )
+      return false;
+    if (
+      "lt" in cond &&
+      !(comparable(val, norm(cond.lt)) && val < (norm(cond.lt) as any))
+    )
+      return false;
+    if (
+      "lte" in cond &&
+      !(comparable(val, norm(cond.lte)) && val <= (norm(cond.lte) as any))
+    )
+      return false;
+    if (cond.in && !(cond.in as unknown[]).map(norm).includes(val))
+      return false;
+    if (cond.notIn && (cond.notIn as unknown[]).map(norm).includes(val))
+      return false;
+    if (cond.contains !== undefined && !str(val).includes(str(cond.contains)))
+      return false;
+    if (
+      cond.startsWith !== undefined &&
+      !str(val).startsWith(str(cond.startsWith))
+    )
+      return false;
+    if (cond.endsWith !== undefined && !str(val).endsWith(str(cond.endsWith)))
+      return false;
   }
   return true;
 }
 
-export function sortRows<R extends object>(rows: R[], orderBy?: OrderBy<R> | OrderBy<R>[]): R[] {
+export function sortRows<R extends object>(
+  rows: R[],
+  orderBy?: OrderBy<R> | OrderBy<R>[],
+): R[] {
   if (!orderBy) return rows;
   const keys = Array.isArray(orderBy) ? orderBy : [orderBy];
   return [...rows].sort((a, b) => {
@@ -67,6 +105,11 @@ export function sortRows<R extends object>(rows: R[], orderBy?: OrderBy<R> | Ord
 /** Turns a Date / ISO string / number into a sortable number. null when it cannot be read. */
 export function toKey(v: unknown, type: "date" | "number"): number | null {
   if (v === null || v === undefined || v === "") return null;
-  const n = v instanceof Date ? v.getTime() : type === "date" ? new Date(v as string | number).getTime() : Number(v);
+  const n =
+    v instanceof Date
+      ? v.getTime()
+      : type === "date"
+        ? new Date(v as string | number).getTime()
+        : Number(v);
   return Number.isNaN(n) ? null : n;
 }

@@ -40,7 +40,10 @@ var MemoryDriver = class {
     return [...this.header];
   }
   async read() {
-    return this.rows.map((values, i) => ({ rowNum: i + 2, values: [...values] }));
+    return this.rows.map((values, i) => ({
+      rowNum: i + 2,
+      values: [...values]
+    }));
   }
   async append(rows) {
     this.rows.push(...rows.map((r) => [...r]));
@@ -49,7 +52,8 @@ var MemoryDriver = class {
     for (const { rowNum, values } of rows) this.rows[rowNum - 2] = [...values];
   }
   async remove(rowNums) {
-    for (const n of [...rowNums].sort((a, b) => b - a)) this.rows.splice(n - 2, 1);
+    for (const n of [...rowNums].sort((a, b) => b - a))
+      this.rows.splice(n - 2, 1);
   }
 };
 // Annotate the CommonJS export names for ESM import in node:

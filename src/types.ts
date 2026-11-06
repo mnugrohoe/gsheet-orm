@@ -14,7 +14,11 @@ export interface FieldDef {
 
 export type Schema = Record<string, FieldType | FieldDef>;
 
-type TypeName<F> = F extends FieldType ? F : F extends { type: infer T } ? T : never;
+type TypeName<F> = F extends FieldType
+  ? F
+  : F extends { type: infer T }
+    ? T
+    : never;
 type EnumOf<F> = F extends { enum: readonly (infer E)[] } ? E : never;
 type Base<T> = T extends "string"
   ? string
@@ -26,24 +30,37 @@ type Base<T> = T extends "string"
         ? Date
         : unknown;
 
-export type ValueOf<F> = ([EnumOf<F>] extends [never] ? Base<TypeName<F>> : EnumOf<F>) |
-  (F extends { required: true } ? never : null);
+export type ValueOf<F> =
+  | ([EnumOf<F>] extends [never] ? Base<TypeName<F>> : EnumOf<F>)
+  | (F extends { required: true } ? never : null);
 
 export type SystemFields = { id: string; createdAt: Date; updatedAt: Date };
 
-export type Row<S extends Schema> = SystemFields & { -readonly [K in keyof S]: ValueOf<S[K]> };
+export type Row<S extends Schema> = SystemFields & {
+  -readonly [K in keyof S]: ValueOf<S[K]>;
+};
 
 type RequiredKeys<S extends Schema> = {
-  [K in keyof S]: S[K] extends { required: true } ? (S[K] extends { default: unknown } ? never : K) : never;
+  [K in keyof S]: S[K] extends { required: true }
+    ? S[K] extends { default: unknown }
+      ? never
+      : K
+    : never;
 }[keyof S];
 
 export type CreateInput<S extends Schema> = { id?: string } & {
   [K in RequiredKeys<S>]: ValueOf<S[K]>;
 } & { [K in Exclude<keyof S, RequiredKeys<S>>]?: ValueOf<S[K]> };
 
-export type UpdateInput<S extends Schema> = { -readonly [K in keyof S]?: ValueOf<S[K]> };
+export type UpdateInput<S extends Schema> = {
+  -readonly [K in keyof S]?: ValueOf<S[K]>;
+};
 
-export type InferRow<M> = M extends { readonly __schema?: infer S extends Schema } ? Row<S> : never;
+export type InferRow<M> = M extends {
+  readonly __schema?: infer S extends Schema;
+}
+  ? Row<S>
+  : never;
 
 export type Operator<T> = {
   eq?: T;

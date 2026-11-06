@@ -58,7 +58,10 @@ export class TableDriver implements Driver {
     private readonly cfg: TableDriverConfig,
   ) {}
 
-  async init(columns: ColumnSpec[], { migrate }: { migrate: boolean }): Promise<string[]> {
+  async init(
+    columns: ColumnSpec[],
+    { migrate }: { migrate: boolean },
+  ): Promise<string[]> {
     if (!this.cfg.existing) await this.createTable(columns);
 
     let meta = await this.fetchMeta();
@@ -132,7 +135,11 @@ export class TableDriver implements Driver {
   private async fetchMeta(): Promise<TableMeta> {
     const sheets = await this.api.listSheets();
     for (const s of sheets) {
-      const t = s.tables.find((t) => (this.tableId ? t.tableId === this.tableId : t.name === this.cfg.tableName));
+      const t = s.tables.find((t) =>
+        this.tableId
+          ? t.tableId === this.tableId
+          : t.name === this.cfg.tableName,
+      );
       if (t) {
         this.tableId = t.tableId;
         this.meta = t;
@@ -157,7 +164,11 @@ export class TableDriver implements Driver {
   }
 
   /** Best effort: extends the table range to the right and registers the new columns. */
-  private async addColumns(meta: TableMeta, currentWidth: number, missing: ColumnSpec[]) {
+  private async addColumns(
+    meta: TableMeta,
+    currentWidth: number,
+    missing: ColumnSpec[],
+  ) {
     const r = meta.range;
     const q = quoteSheet(meta.sheetTitle);
     await this.api.updateValues(
@@ -207,7 +218,9 @@ export class TableDriver implements Driver {
         appendCells: {
           tableId: meta.tableId,
           rows: rows.map((r) => ({
-            values: Array.from({ length: width }, (_, i) => cellData(r[i] ?? null)),
+            values: Array.from({ length: width }, (_, i) =>
+              cellData(r[i] ?? null),
+            ),
           })),
           fields: "userEnteredValue",
         },

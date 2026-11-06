@@ -4,12 +4,21 @@ import type { OrderBy, Where } from "./types.js";
 
 /** Anything with findMany: a Model, a ShardedModel, or your own wrapper. */
 export interface Queryable<R> {
-  findMany(opts?: { where?: Where<R>; orderBy?: OrderBy<R> | OrderBy<R>[] }): Promise<R[]>;
+  findMany(opts?: {
+    where?: Where<R>;
+    orderBy?: OrderBy<R> | OrderBy<R>[];
+  }): Promise<R[]>;
 }
 
 export type JoinType = "left" | "inner";
 
-export interface JoinOptions<L, R, As extends string, Many extends boolean, T extends JoinType> {
+export interface JoinOptions<
+  L,
+  R,
+  As extends string,
+  Many extends boolean,
+  T extends JoinType,
+> {
   /** [field on the left model, field on the right model] */
   on: [keyof L & string, keyof R & string];
   /** Property that receives the joined row(s). */
@@ -25,7 +34,13 @@ export interface JoinOptions<L, R, As extends string, Many extends boolean, T ex
   offset?: number;
 }
 
-export type Joined<L, R, As extends string, Many extends boolean, T extends JoinType> = L & {
+export type Joined<
+  L,
+  R,
+  As extends string,
+  Many extends boolean,
+  T extends JoinType,
+> = L & {
   [K in As]: Many extends true ? R[] : T extends "inner" ? R : R | null;
 };
 
@@ -46,13 +61,23 @@ export async function join<
 ): Promise<Joined<L, R, As, Many, T>[]> {
   const [lk, rk] = opts.on;
   const type: JoinType = opts.type ?? "left";
-  const leftRows = await left.findMany({ where: opts.where, orderBy: opts.orderBy });
+  const leftRows = await left.findMany({
+    where: opts.where,
+    orderBy: opts.orderBy,
+  });
 
   if (leftRows.length && opts.as in leftRows[0]!) {
-    throw new GSheetError("VALIDATION", `join: "${opts.as}" collides with a field of the left model`);
+    throw new GSheetError(
+      "VALIDATION",
+      `join: "${opts.as}" collides with a field of the left model`,
+    );
   }
 
-  const keys = [...new Set(leftRows.map((r) => norm((r as any)[lk])).filter((k) => k != null))];
+  const keys = [
+    ...new Set(
+      leftRows.map((r) => norm((r as any)[lk])).filter((k) => k != null),
+    ),
+  ];
   const groups = new Map<unknown, R[]>();
 
   if (keys.length) {
@@ -60,7 +85,8 @@ export async function join<
     // plain `in` keeps shard pruning possible when the right side is partitioned on this field
     const where = (
       opts.rightWhere
-        ? (row: R) => keySet.has(norm((row as any)[rk])) && matches(row, opts.rightWhere)
+        ? (row: R) =>
+            keySet.has(norm((row as any)[rk])) && matches(row, opts.rightWhere)
         : ({ [rk]: { in: keys } } as unknown as Where<R>)
     ) as Where<R>;
     for (const r of await right.findMany({ where })) {

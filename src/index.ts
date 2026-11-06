@@ -10,7 +10,7 @@ export { SheetDriver } from "./drivers/sheet.js";
 
 export type { ClientOptions, SheetsApiLike, SheetMeta, TableMeta } from "./client.js";
 export type { ErrorCode } from "./errors.js";
-export type { ShardDef, ShardedOptions, PartitionedModelOptions } from "./sharded.js";
+export type { ShardDef, ShardedOptions, PartitionedModelOptions, FindPageOptions, Page } from "./sharded.js";
 export type { GSheetDBOptions } from "./db.js";
 export type { Queryable, JoinOptions, Joined, JoinType } from "./join.js";
 export type { Driver, ColumnSpec, Cell, RawRow, DateFormat } from "./drivers/driver.js";

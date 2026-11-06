@@ -1,4 +1,10 @@
-export type ErrorCode = "CONFIG" | "SCHEMA" | "VALIDATION" | "UNIQUE" | "SHARD" | "API";
+export type ErrorCode =
+  | "CONFIG"
+  | "SCHEMA"
+  | "VALIDATION"
+  | "UNIQUE"
+  | "SHARD"
+  | "API";
 
 export class GSheetError extends Error {
   readonly code: ErrorCode;

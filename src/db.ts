@@ -1,7 +1,12 @@
 import { SheetsApi, lazySheets, type ClientOptions } from "./client.js";
 import { GSheetError } from "./errors.js";
 import { Model } from "./model.js";
-import { ShardedModel, type PartitionedModelOptions, type ShardDef, type ShardedOptions } from "./sharded.js";
+import {
+  ShardedModel,
+  type PartitionedModelOptions,
+  type ShardDef,
+  type ShardedOptions,
+} from "./sharded.js";
 import type { ModelOptions, Schema } from "./types.js";
 
 export interface GSheetDBOptions extends ClientOptions {
@@ -36,7 +41,10 @@ export class GSheetDB {
   /** API handle for the default spreadsheet. */
   get api(): SheetsApi {
     if (!this.opts.spreadsheetId) {
-      throw new GSheetError("CONFIG", "No default spreadsheetId. Pass one to GSheetDB or to the model.");
+      throw new GSheetError(
+        "CONFIG",
+        "No default spreadsheetId. Pass one to GSheetDB or to the model.",
+      );
     }
     return this.apiFor(this.opts.spreadsheetId);
   }
@@ -50,8 +58,16 @@ export class GSheetDB {
    * - With `partitionBy`: rows are split over the shards declared on `GSheetDB`
    *   (or on this model) by that date or number field, and routed automatically.
    */
-  model<const S extends Schema>(name: string, schema: S, opts: PartitionedModelOptions): ShardedModel<S>;
-  model<const S extends Schema>(name: string, schema: S, opts?: ModelOptions): Model<S>;
+  model<const S extends Schema>(
+    name: string,
+    schema: S,
+    opts: PartitionedModelOptions,
+  ): ShardedModel<S>;
+  model<const S extends Schema>(
+    name: string,
+    schema: S,
+    opts?: ModelOptions,
+  ): Model<S>;
   model<const S extends Schema>(
     name: string,
     schema: S,
@@ -59,7 +75,10 @@ export class GSheetDB {
   ): Model<S> | ShardedModel<S> {
     if ("partitionBy" in opts && opts.partitionBy) {
       if ((opts as ModelOptions).spreadsheetId) {
-        throw new GSheetError("CONFIG", `[${name}] "spreadsheetId" cannot be combined with "partitionBy"`);
+        throw new GSheetError(
+          "CONFIG",
+          `[${name}] "spreadsheetId" cannot be combined with "partitionBy"`,
+        );
       }
       const shards = opts.shards ?? this.opts.shards;
       if (!shards?.length) {
@@ -68,12 +87,20 @@ export class GSheetDB {
           `[${name}] "partitionBy" needs shards: pass \`shards\` to GSheetDB (or to this model)`,
         );
       }
-      return this.sharded(name, schema, { ...opts, shards, concurrency: opts.concurrency ?? this.opts.concurrency });
+      return this.sharded(name, schema, {
+        ...opts,
+        shards,
+        concurrency: opts.concurrency ?? this.opts.concurrency,
+      });
     }
 
     const id = (opts as ModelOptions).spreadsheetId ?? this.opts.spreadsheetId;
     return new Model<S>(name, schema, opts as ModelOptions, () => {
-      if (!id) throw new GSheetError("CONFIG", `[${name}] no spreadsheetId. Pass one to GSheetDB or to the model.`);
+      if (!id)
+        throw new GSheetError(
+          "CONFIG",
+          `[${name}] no spreadsheetId. Pass one to GSheetDB or to the model.`,
+        );
       return this.apiFor(id);
     });
   }
@@ -82,7 +109,11 @@ export class GSheetDB {
    * Same as `db.model(name, schema, { partitionBy, shards })`, always with the shards given here.
    * Use it when this model has its own shard list.
    */
-  sharded<const S extends Schema>(name: string, schema: S, opts: ShardedOptions): ShardedModel<S> {
+  sharded<const S extends Schema>(
+    name: string,
+    schema: S,
+    opts: ShardedOptions,
+  ): ShardedModel<S> {
     return new ShardedModel<S>(name, schema, opts, (id) => this.apiFor(id));
   }
 }

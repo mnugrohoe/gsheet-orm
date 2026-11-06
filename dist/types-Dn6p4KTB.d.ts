@@ -61,9 +61,9 @@ type Row<S extends Schema> = SystemFields & {
 type RequiredKeys<S extends Schema> = {
     [K in keyof S]: S[K] extends {
         required: true;
-    } ? (S[K] extends {
+    } ? S[K] extends {
         default: unknown;
-    } ? never : K) : never;
+    } ? never : K : never;
 }[keyof S];
 type CreateInput<S extends Schema> = {
     id?: string;

@@ -1,6 +1,6 @@
 import { sheets_v4 } from '@googleapis/sheets';
-import { W as Where, O as OrderBy, S as Schema, M as ModelOptions, F as FindOptions, R as Row, C as CreateInput, a as SystemFields, U as UpdateInput, D as Driver, b as DateFormat, c as ColumnSpec, d as RawRow, e as Cell } from './types-B5M3qurL.js';
-export { f as FieldDef, g as FieldType, I as InferRow, h as Operator } from './types-B5M3qurL.js';
+import { W as Where, O as OrderBy, S as Schema, M as ModelOptions, F as FindOptions, R as Row, C as CreateInput, a as SystemFields, U as UpdateInput, D as Driver, b as DateFormat, c as ColumnSpec, d as RawRow, e as Cell } from './types-Dn6p4KTB.js';
+export { f as FieldDef, g as FieldType, I as InferRow, h as Operator } from './types-Dn6p4KTB.js';
 
 interface ClientOptions {
     /** Default spreadsheet. Optional when every model passes its own (or uses shards). */

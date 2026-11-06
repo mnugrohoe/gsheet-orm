@@ -41,6 +41,33 @@ export interface ShardedOptions extends Omit<ModelOptions, "spreadsheetId" | "dr
   concurrency?: number;
 }
 
+export interface FindPageOptions<R> {
+  where?: Where<R>;
+  /** Rows per page. Default 20. */
+  pageSize?: number;
+  /** `cursor` of the previous page. Omit or pass null for the first page. */
+  cursor?: string | null;
+  /** "desc" (default): newest spreadsheet and newest rows first. "asc": oldest first. */
+  order?: "asc" | "desc";
+  /**
+   * true (default): when a spreadsheet runs out mid-page, read the next one to fill the page.
+   * false: return the short page as it is, and read the next spreadsheet on the next call.
+   */
+  fill?: boolean;
+  /** Skip the read cache. */
+  fresh?: boolean;
+}
+
+export interface Page<R> {
+  rows: R[];
+  /** Pass this as `cursor` to get the next page. null means there is nothing more to read. */
+  cursor: string | null;
+  /** true when `cursor` is set. Older spreadsheets that were not read yet count as "maybe more". */
+  hasMore: boolean;
+  /** Labels of the spreadsheets that were read for this page. */
+  readShards: string[];
+}
+
 /** Options of `db.model` when the model is split over the db-level (or its own) shards. */
 export type PartitionedModelOptions = Omit<ShardedOptions, "shards"> & {
   /** Overrides the shards declared on GSheetDB for this model only. */
@@ -239,6 +266,105 @@ export class ShardedModel<S extends Schema = Schema> {
     return counts.reduce((a, b) => a + b, 0);
   }
 
+  /* ------------------------------ paging ------------------------------ */
+
+  /**
+   * Cursor paging over the spreadsheets, newest first by default.
+   *
+   * It reads only the newest spreadsheet until its rows are used up, then moves on to the
+   * next one, so a "latest rows" screen costs one spreadsheet read and old years are never
+   * touched unless the user keeps paging. Rows are ordered by the partition field, ties by id.
+   *
+   * The cursor is a position (not an offset), so rows added or removed between two calls do
+   * not cause duplicates or gaps. Turn on the model `cache` to avoid re-reading the same
+   * spreadsheet for every page.
+   */
+  async findPage(opts: FindPageOptions<Row<S>> = {}): Promise<Page<Row<S>>> {
+    const pageSize = opts.pageSize ?? 20;
+    if (!Number.isInteger(pageSize) || pageSize < 1) {
+      throw new GSheetError("VALIDATION", `[${this.name}] pageSize must be a positive integer`);
+    }
+    const order = opts.order ?? "desc";
+    const fill = opts.fill ?? true;
+
+    let shards = this.pick(opts.where);
+    if (order === "desc") shards = [...shards].reverse();
+
+    let start = 0;
+    let after: { k: number | null; id: string } | null = null;
+    if (opts.cursor) {
+      const c = decodeCursor(opts.cursor, this.name);
+      if (c.o !== order) {
+        throw new GSheetError("VALIDATION", `[${this.name}] cursor was made with order "${c.o}", not "${order}"`);
+      }
+      start = shards.findIndex((sh) => sh.spreadsheetId === c.ss);
+      if (start < 0) {
+        throw new GSheetError("VALIDATION", `[${this.name}] cursor does not match the spreadsheets of this query`);
+      }
+      if (c.id !== null) after = { k: c.k, id: c.id };
+    }
+
+    const rows: Row<S>[] = [];
+    const readShards: string[] = [];
+
+    for (let i = start; i < shards.length; i++) {
+      const shard = shards[i]!;
+      readShards.push(shard.label);
+
+      let list = await shard.model.findMany({
+        where: opts.where,
+        orderBy: [{ field: this.field, dir: order }, { field: "id" }] as never,
+        fresh: opts.fresh,
+      });
+      if (i === start && after) {
+        const pos = after;
+        list = list.filter((r) => this.isAfter(r, pos, order));
+      }
+
+      const take = list.slice(0, pageSize - rows.length);
+      rows.push(...take);
+
+      if (list.length > take.length) {
+        const last = take[take.length - 1]!;
+        const cursor = encodeCursor({ o: order, ss: shard.spreadsheetId, k: this.key((last as Rec)[this.field]), id: last.id });
+        return { rows, cursor, hasMore: true, readShards };
+      }
+
+      // this spreadsheet is used up
+      const next = shards[i + 1];
+      if (!next) return { rows, cursor: null, hasMore: false, readShards };
+      if (rows.length >= pageSize || (!fill && rows.length > 0)) {
+        const cursor = encodeCursor({ o: order, ss: next.spreadsheetId, k: null, id: null });
+        return { rows, cursor, hasMore: true, readShards };
+      }
+    }
+    return { rows, cursor: null, hasMore: false, readShards };
+  }
+
+  private isAfter(row: Row<S>, pos: { k: number | null; id: string }, order: "asc" | "desc"): boolean {
+    const k = this.key((row as Rec)[this.field]);
+    // empty partition values sort last in both directions
+    if (k === null) return pos.k === null ? row.id > pos.id : true;
+    if (pos.k === null) return false;
+    if (k === pos.k) return row.id > pos.id;
+    return order === "desc" ? k < pos.k : k > pos.k;
+  }
+
+  /** Walks all pages lazily. Stop early with `break` and the remaining spreadsheets are never read. */
+  async *pages(opts: Omit<FindPageOptions<Row<S>>, "cursor"> = {}): AsyncGenerator<Row<S>[], void, undefined> {
+    let cursor: string | null = null;
+    do {
+      const page: Page<Row<S>> = await this.findPage({ ...opts, cursor });
+      if (page.rows.length) yield page.rows;
+      cursor = page.cursor;
+    } while (cursor);
+  }
+
+  /** The newest `limit` rows (default 20), reading as few spreadsheets as possible. */
+  async findLatest(limit = 20, opts: { where?: Where<Row<S>>; fresh?: boolean } = {}): Promise<Row<S>[]> {
+    return (await this.findPage({ ...opts, pageSize: limit, order: "desc" })).rows;
+  }
+
   /* ------------------------------ create ------------------------------ */
 
   async create(data: CreateInput<S>): Promise<Row<S>> {
@@ -356,4 +482,23 @@ export class ShardedModel<S extends Schema = Schema> {
   ): Promise<Joined<Row<S>, R, As, Many, T>[]> {
     return join<Row<S>, R, As, Many, T>(this as unknown as Queryable<Row<S>>, other, opts);
   }
+}
+
+interface CursorData {
+  o: "asc" | "desc";
+  ss: string;
+  k: number | null;
+  id: string | null;
+}
+
+const encodeCursor = (c: CursorData): string => Buffer.from(JSON.stringify(c)).toString("base64url");
+
+function decodeCursor(cursor: string, model: string): CursorData {
+  try {
+    const c = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as CursorData;
+    if ((c.o === "asc" || c.o === "desc") && typeof c.ss === "string") return c;
+  } catch {
+    /* fall through */
+  }
+  throw new GSheetError("VALIDATION", `[${model}] invalid cursor`);
 }

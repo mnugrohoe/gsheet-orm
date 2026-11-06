@@ -1,4 +1,8 @@
-import { sheets as createSheets, auth as googleAuth, type sheets_v4 } from "@googleapis/sheets";
+import {
+  sheets as createSheets,
+  auth as googleAuth,
+  type sheets_v4,
+} from "@googleapis/sheets";
 import { GSheetError } from "./errors.js";
 
 export interface ClientOptions {
@@ -41,7 +45,9 @@ export interface SheetsApiLike {
   batchUpdate(requests: unknown[]): Promise<any>;
   getValues(range: string): Promise<unknown[][]>;
   updateValues(range: string, values: unknown[][]): Promise<void>;
-  batchUpdateValues(data: { range: string; values: unknown[][] }[]): Promise<void>;
+  batchUpdateValues(
+    data: { range: string; values: unknown[][] }[],
+  ): Promise<void>;
   appendValues(range: string, values: unknown[][]): Promise<void>;
 }
 
@@ -49,20 +55,32 @@ const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
 
 function statusOf(err: any): number | undefined {
   const s = err?.response?.status ?? err?.status ?? err?.code;
-  return typeof s === "number" ? s : typeof s === "string" && /^\d+$/.test(s) ? Number(s) : undefined;
+  return typeof s === "number"
+    ? s
+    : typeof s === "string" && /^\d+$/.test(s)
+      ? Number(s)
+      : undefined;
 }
 
 export type SheetsGetter = () => sheets_v4.Sheets;
 
 /** Builds the Google client once and shares it, so many spreadsheets reuse one login. */
-export function lazySheets(opts: Pick<ClientOptions, "credentials" | "auth">): SheetsGetter {
+export function lazySheets(
+  opts: Pick<ClientOptions, "credentials" | "auth">,
+): SheetsGetter {
   let api: sheets_v4.Sheets | undefined;
   return () => {
     if (api) return api;
     let authClient = opts.auth;
     if (!authClient) {
-      const email = opts.credentials?.clientEmail ?? process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-      const key = (opts.credentials?.privateKey ?? process.env.GOOGLE_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+      const email =
+        opts.credentials?.clientEmail ??
+        process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+      const key = (
+        opts.credentials?.privateKey ??
+        process.env.GOOGLE_PRIVATE_KEY ??
+        ""
+      ).replace(/\\n/g, "\n");
       if (!email || !key) {
         throw new GSheetError(
           "CONFIG",
@@ -94,7 +112,10 @@ export class SheetsApi implements SheetsApiLike {
   private retries: number;
   private baseDelayMs: number;
 
-  constructor(opts: ClientOptions & { spreadsheetId: string }, shared?: SheetsGetter) {
+  constructor(
+    opts: ClientOptions & { spreadsheetId: string },
+    shared?: SheetsGetter,
+  ) {
     this.spreadsheetId = opts.spreadsheetId;
     this.getSheets = shared ?? lazySheets(opts);
     const r = opts.retry === false ? { retries: 0 } : (opts.retry ?? {});
@@ -113,14 +134,25 @@ export class SheetsApi implements SheetsApiLike {
       } catch (err: any) {
         if (err instanceof GSheetError) throw err; // e.g. CONFIG: never retry or re-wrap
         const status = statusOf(err);
-        const network = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"].includes(err?.code);
-        if (attempt < this.retries && ((status && RETRYABLE.has(status)) || network)) {
-          const delay = this.baseDelayMs * 2 ** attempt * (0.75 + Math.random() * 0.5);
+        const network = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"].includes(
+          err?.code,
+        );
+        if (
+          attempt < this.retries &&
+          ((status && RETRYABLE.has(status)) || network)
+        ) {
+          const delay =
+            this.baseDelayMs * 2 ** attempt * (0.75 + Math.random() * 0.5);
           await new Promise((res) => setTimeout(res, delay));
           continue;
         }
-        const detail = err?.response?.data?.error?.message ?? err?.message ?? String(err);
-        throw new GSheetError("API", `Google Sheets API error${status ? ` (${status})` : ""}: ${detail}`, { cause: err });
+        const detail =
+          err?.response?.data?.error?.message ?? err?.message ?? String(err);
+        throw new GSheetError(
+          "API",
+          `Google Sheets API error${status ? ` (${status})` : ""}: ${detail}`,
+          { cause: err },
+        );
       }
     }
   }
@@ -179,7 +211,9 @@ export class SheetsApi implements SheetsApiLike {
     );
   }
 
-  async batchUpdateValues(data: { range: string; values: unknown[][] }[]): Promise<void> {
+  async batchUpdateValues(
+    data: { range: string; values: unknown[][] }[],
+  ): Promise<void> {
     if (!data.length) return;
     await this.call(() =>
       this.api.spreadsheets.values.batchUpdate({

@@ -1,5 +1,9 @@
 /** Runs `fn` over `items` with at most `limit` in flight. Keeps result order. */
-export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const worker = async () => {
@@ -8,6 +12,8 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (it
       out[i] = await fn(items[i]!, i);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, worker));
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, worker),
+  );
   return out;
 }

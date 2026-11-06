@@ -508,6 +508,79 @@ await Orders.findById(id, new Date("2024-06-01"));
 await Orders.updateById(id, { date: new Date("2025-02-01") });
 ```
 
+### Paging, newest first (`findPage`, `pages`, `findLatest`)
+
+`findMany` over all years reads every spreadsheet. For "latest rows" screens, "load more" buttons and exports, use `findPage`. It reads the newest spreadsheet first and only moves to the next one when the current one is used up, so old years are not read unless the user keeps going.
+
+```ts
+const page1 = await Orders.findPage({ pageSize: 20 });
+page1.rows;        // the 20 newest orders
+page1.cursor;      // pass it back for the next page, null when there is nothing more
+page1.hasMore;     // true when cursor is set
+page1.readShards;  // ["2025+"]  which spreadsheets this call read
+
+const page2 = await Orders.findPage({ pageSize: 20, cursor: page1.cursor });
+```
+
+| Option     | Default  | Description                                                                                          |
+| ---------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `where`    | none     | Same filters as `findMany`. Spreadsheets that cannot match are never read. Use the same `where` for every page. |
+| `pageSize` | `20`     | Rows per page.                                                                                       |
+| `cursor`   | none     | The `cursor` of the previous page.                                                                   |
+| `order`    | `"desc"` | `"desc"`: newest first. `"asc"`: oldest first. Always by the partition field, ties by `id`.          |
+| `fill`     | `true`   | `true`: if a spreadsheet runs out mid-page, read the next one to fill the page. `false`: return the short page and read the next spreadsheet on the next call. |
+| `fresh`    | `false`  | Skip the read cache.                                                                                 |
+
+How many reads it costs (3 spreadsheets: 2025+ with 5 rows, 2024 with 4, 2022-23 with 3):
+
+| Call                                  | Spreadsheets read |
+| ------------------------------------- | ----------------- |
+| first page, `pageSize: 3`             | 2025+ only        |
+| second page (2 rows left, then 1 more)| 2025+ and 2024    |
+| a page that ends exactly at the boundary | 2025+ only. The next spreadsheet is read on the next call. |
+
+Good to know:
+
+- **The cursor is a position, not an offset.** Rows added or removed between two calls do not create duplicates or gaps. It is an opaque string, safe to put in a URL.
+- **`hasMore` can be a "maybe".** When the current spreadsheet is used up and older ones exist, the library does not read them just to find out. The next call can then return an empty page with `cursor: null`.
+- **The order is fixed** to the partition field (ties by `id`), because that is what makes it possible to read one spreadsheet at a time. For another sort order use `findMany`.
+- **Each call reads the spreadsheet again** (1 request for a plain tab, about 2 for a Table). Turn on the model `cache` and paging through one spreadsheet reads it once, however many pages.
+- `findPage`, `pages` and `findLatest` exist on sharded models only.
+
+```ts
+// cache so "load more" does not read the same spreadsheet again
+const Orders = db.model("orders", schema, { partitionBy: "date", cache: { ttlMs: 60_000 } });
+```
+
+**Next.js "load more":**
+
+```ts
+// app/api/orders/route.ts
+import { NextResponse } from "next/server";
+import { Orders } from "@/lib/db";
+
+export async function GET(req: Request) {
+  const cursor = new URL(req.url).searchParams.get("cursor"); // null on the first call
+  return NextResponse.json(await Orders.findPage({ pageSize: 20, cursor }));
+}
+// client: fetch(`/api/orders?cursor=${page.cursor}`) while page.cursor is not null
+```
+
+**`pages(options)`** walks the pages lazily as an async iterator. It does not read the next spreadsheet until you ask for the next page, so `break` stops reading.
+
+```ts
+for await (const rows of Orders.pages({ pageSize: 100, where: { date: { gte: new Date("2024-01-01") } } })) {
+  await process(rows);
+  if (done) break; // older spreadsheets are never read
+}
+```
+
+**`findLatest(limit?, { where?, fresh? })`** returns the newest `limit` rows (default 20), reading as few spreadsheets as needed.
+
+```ts
+const latest = await Orders.findLatest(10);
+```
+
 ### Inspecting
 
 ```ts

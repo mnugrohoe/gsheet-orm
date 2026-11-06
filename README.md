@@ -128,6 +128,18 @@ It has the same methods as a normal model (`findMany`, `create`, `update`, `upse
 | `findById(id, hint?)`                      | An id says nothing about the year, so it scans newest to oldest. Pass a date as `hint` to read one spreadsheet.                                                   |
 | `update` of the partition field            | The row moves to the spreadsheet that now owns it (inserted first, deleted after, so a failure leaves a duplicate and not a loss). `id` and `createdAt` are kept. |
 
+**Latest first, without reading every year.** `findPage` reads the newest spreadsheet first and only moves to the next one when it is used up:
+
+```ts
+const page = await Orders.findPage({ pageSize: 20 }); // reads only the newest spreadsheet
+const next = await Orders.findPage({ pageSize: 20, cursor: page.cursor });
+
+await Orders.findLatest(10); // newest 10 rows
+for await (const rows of Orders.pages({ pageSize: 100 })) { /* lazy, break any time */ }
+```
+
+See [paging](./docs/API.md#paging-newest-first-findpage-pages-findlatest).
+
 Ranges use `years: [from, to]` (whole years, inclusive, UTC) for date fields, or `from` / `to` (to is exclusive) for dates and numbers. Ranges must not overlap. Gaps are allowed.
 
 Each spreadsheet resolves its own storage, so a 2022 spreadsheet that is still a plain tab and a 2025 spreadsheet that uses a Table work side by side. Use `Orders.sources` to see what each one picked and `Orders.shardsFor(where)` to see which spreadsheets a query would touch.
