@@ -5,10 +5,16 @@ import type { Cell, DateFormat } from "./drivers/driver.js";
 const EPOCH_OFFSET_DAYS = 25569; // days between 1899-12-30 and 1970-01-01
 const MS_PER_DAY = 86_400_000;
 
-export const dateToSerial = (d: Date): number => d.getTime() / MS_PER_DAY + EPOCH_OFFSET_DAYS;
-export const serialToDate = (n: number): Date => new Date(Math.round((n - EPOCH_OFFSET_DAYS) * MS_PER_DAY));
+export const dateToSerial = (d: Date): number =>
+  d.getTime() / MS_PER_DAY + EPOCH_OFFSET_DAYS;
+export const serialToDate = (n: number): Date =>
+  new Date(Math.round((n - EPOCH_OFFSET_DAYS) * MS_PER_DAY));
 
-export function serialize(value: unknown, type: FieldType, dateFormat: DateFormat): Cell {
+export function serialize(
+  value: unknown,
+  type: FieldType,
+  dateFormat: DateFormat,
+): Cell {
   if (value === null || value === undefined) return null;
   switch (type) {
     case "string":
@@ -38,7 +44,8 @@ export function deserialize(raw: unknown, type: FieldType): unknown {
     case "boolean":
       return raw === true || String(raw).toLowerCase() === "true";
     case "date": {
-      const d = typeof raw === "number" ? serialToDate(raw) : new Date(String(raw));
+      const d =
+        typeof raw === "number" ? serialToDate(raw) : new Date(String(raw));
       return Number.isNaN(d.getTime()) ? null : d;
     }
     case "json":

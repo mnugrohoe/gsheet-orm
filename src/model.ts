@@ -4,7 +4,13 @@ import { deserialize, serialize } from "./codec.js";
 import type { Cell, ColumnSpec, Driver } from "./drivers/driver.js";
 import { resolveDriver } from "./drivers/resolve.js";
 import { GSheetError } from "./errors.js";
-import { join, type Joined, type JoinOptions, type JoinType, type Queryable } from "./join.js";
+import {
+  join,
+  type Joined,
+  type JoinOptions,
+  type JoinType,
+  type Queryable,
+} from "./join.js";
 import { matches, norm, sortRows } from "./query.js";
 import type {
   CreateInput,
@@ -51,13 +57,20 @@ export class Model<S extends Schema = Schema> {
     this.fields = {};
     for (const [key, def] of Object.entries(schema)) {
       if (RESERVED.includes(key)) {
-        throw new GSheetError("SCHEMA", `[${name}] "${key}" is reserved and added automatically`);
+        throw new GSheetError(
+          "SCHEMA",
+          `[${name}] "${key}" is reserved and added automatically`,
+        );
       }
       this.fields[key] = typeof def === "string" ? { type: def } : def;
     }
     this.columns = [
       { name: "id", type: "string" },
-      ...Object.entries(this.fields).map(([n, f]) => ({ name: n, type: f.type, enum: f.enum })),
+      ...Object.entries(this.fields).map(([n, f]) => ({
+        name: n,
+        type: f.type,
+        enum: f.enum,
+      })),
       { name: "createdAt", type: "date" as const },
       { name: "updatedAt", type: "date" as const },
     ];
@@ -91,7 +104,9 @@ export class Model<S extends Schema = Schema> {
         sheet: o.sheet,
         create: o.create ?? true,
       }));
-    this.header = await driver.init(this.columns, { migrate: o.migrate ?? true });
+    this.header = await driver.init(this.columns, {
+      migrate: o.migrate ?? true,
+    });
     this.driver = driver;
   }
 
@@ -104,7 +119,8 @@ export class Model<S extends Schema = Schema> {
   private toRow(raw: unknown[]): Row<S> {
     const row: Rec = {};
     this.header.forEach((col, i) => {
-      if (this.managed.has(col)) row[col] = deserialize(raw[i], this.typeOf(col));
+      if (this.managed.has(col))
+        row[col] = deserialize(raw[i], this.typeOf(col));
     });
     return row as Row<S>;
   }
@@ -121,11 +137,16 @@ export class Model<S extends Schema = Schema> {
   private async load(fresh = false): Promise<Loaded<S>[]> {
     await this.sync();
     const ttl = this.opts.cache ? this.opts.cache.ttlMs : 0;
-    if (!fresh && ttl && this.cache && Date.now() - this.cache.at < ttl) return this.cache.rows;
+    if (!fresh && ttl && this.cache && Date.now() - this.cache.at < ttl)
+      return this.cache.rows;
 
     const rows = (await this.driver!.read())
       .filter((r) => r.values.some((v) => v !== "" && v != null && v !== false))
-      .map((r) => ({ rowNum: r.rowNum, raw: r.values, row: this.toRow(r.values) }));
+      .map((r) => ({
+        rowNum: r.rowNum,
+        raw: r.values,
+        row: this.toRow(r.values),
+      }));
 
     // rows typed in by hand in Sheets have no id yet: assign one so they can be updated/deleted
     if (this.opts.healIds ?? true) {
@@ -138,7 +159,10 @@ export class Model<S extends Schema = Schema> {
           o.row.updatedAt ||= now;
         }
         await this.driver!.update(
-          orphans.map((o) => ({ rowNum: o.rowNum, values: this.toCells(o.row as Rec, o.raw) })),
+          orphans.map((o) => ({
+            rowNum: o.rowNum,
+            values: this.toCells(o.row as Rec, o.raw),
+          })),
         );
       }
     }
@@ -155,14 +179,17 @@ export class Model<S extends Schema = Schema> {
 
   private normalize(key: string, def: FieldDef, v: unknown): unknown {
     if (v === null || v === undefined) return null;
-    const bad = (what: string) => new GSheetError("VALIDATION", `[${this.name}] "${key}" must be ${what}`);
+    const bad = (what: string) =>
+      new GSheetError("VALIDATION", `[${this.name}] "${key}" must be ${what}`);
     switch (def.type) {
       case "string":
         if (typeof v !== "string") throw bad("a string");
-        if (def.enum && !def.enum.includes(v)) throw bad(`one of: ${def.enum.join(", ")}`);
+        if (def.enum && !def.enum.includes(v))
+          throw bad(`one of: ${def.enum.join(", ")}`);
         return v;
       case "number":
-        if (typeof v !== "number" || !Number.isFinite(v)) throw bad("a finite number");
+        if (typeof v !== "number" || !Number.isFinite(v))
+          throw bad("a finite number");
         return v;
       case "boolean":
         if (typeof v !== "boolean") throw bad("a boolean");
@@ -184,21 +211,33 @@ export class Model<S extends Schema = Schema> {
 
   private requireValue(key: string, def: FieldDef, v: unknown) {
     if (def.required && (v === null || v === undefined || v === "")) {
-      throw new GSheetError("VALIDATION", `[${this.name}] "${key}" is required`);
+      throw new GSheetError(
+        "VALIDATION",
+        `[${this.name}] "${key}" is required`,
+      );
     }
   }
 
   private assertKnown(input: Rec, allowId: boolean, allowTimestamps = false) {
     for (const k of Object.keys(input)) {
-      const ok = k in this.fields || (allowId && k === "id") || (allowTimestamps && (k === "createdAt" || k === "updatedAt"));
+      const ok =
+        k in this.fields ||
+        (allowId && k === "id") ||
+        (allowTimestamps && (k === "createdAt" || k === "updatedAt"));
       if (!ok) {
-        throw new GSheetError("VALIDATION", `[${this.name}] unknown field "${k}"`);
+        throw new GSheetError(
+          "VALIDATION",
+          `[${this.name}] unknown field "${k}"`,
+        );
       }
     }
   }
 
   private assertUnique(records: Rec[], existing: Loaded<S>[], only?: string[]) {
-    const keys = only ?? ["id", ...Object.keys(this.fields).filter((k) => this.fields[k]!.unique)];
+    const keys = only ?? [
+      "id",
+      ...Object.keys(this.fields).filter((k) => this.fields[k]!.unique),
+    ];
     for (const key of keys) {
       const owners = new Map<unknown, unknown>(
         existing.map((e) => [norm((e.row as Rec)[key]), e.row.id]),
@@ -208,7 +247,10 @@ export class Model<S extends Schema = Schema> {
         if (v == null) continue;
         const owner = owners.get(v);
         if (owner !== undefined && owner !== rec.id) {
-          throw new GSheetError("UNIQUE", `[${this.name}] "${key}" must be unique (duplicate: ${String(v)})`);
+          throw new GSheetError(
+            "UNIQUE",
+            `[${this.name}] "${key}" must be unique (duplicate: ${String(v)})`,
+          );
         }
         owners.set(v, rec.id);
       }
@@ -218,7 +260,9 @@ export class Model<S extends Schema = Schema> {
   /* ------------------------------ read ------------------------------ */
 
   async findMany(opts: FindOptions<Row<S>> = {}): Promise<Row<S>[]> {
-    const rows = (await this.load(opts.fresh)).map((l) => l.row).filter((r) => matches(r, opts.where));
+    const rows = (await this.load(opts.fresh))
+      .map((l) => l.row)
+      .filter((r) => matches(r, opts.where));
     const sorted = sortRows(rows, opts.orderBy);
     const start = opts.offset ?? 0;
     const end = opts.limit != null ? start + opts.limit : undefined;
@@ -251,11 +295,16 @@ export class Model<S extends Schema = Schema> {
    * Inserts rows as they are, keeping their id / createdAt / updatedAt when given.
    * Use it to move or back-fill rows (for example when splitting a table into shards).
    */
-  async importMany(rows: (CreateInput<S> & Partial<SystemFields>)[]): Promise<Row<S>[]> {
+  async importMany(
+    rows: (CreateInput<S> & Partial<SystemFields>)[],
+  ): Promise<Row<S>[]> {
     return this.insert(rows, true);
   }
 
-  private async insert(items: (CreateInput<S> & Partial<SystemFields>)[], keepSystem: boolean): Promise<Row<S>[]> {
+  private async insert(
+    items: (CreateInput<S> & Partial<SystemFields>)[],
+    keepSystem: boolean,
+  ): Promise<Row<S>[]> {
     if (!items.length) return [];
     await this.sync();
     const now = new Date();
@@ -267,14 +316,19 @@ export class Model<S extends Schema = Schema> {
       for (const [key, def] of Object.entries(this.fields)) {
         let v = input[key];
         if (v === undefined && def.default !== undefined) {
-          v = typeof def.default === "function" ? (def.default as () => unknown)() : def.default;
+          v =
+            typeof def.default === "function"
+              ? (def.default as () => unknown)()
+              : def.default;
         }
         rec[key] = this.normalize(key, def, v);
         this.requireValue(key, def, rec[key]);
       }
       rec.id = (input.id as string | undefined) ?? randomUUID();
-      rec.createdAt = keepSystem && input.createdAt ? new Date(input.createdAt as Date) : now;
-      rec.updatedAt = keepSystem && input.updatedAt ? new Date(input.updatedAt as Date) : now;
+      rec.createdAt =
+        keepSystem && input.createdAt ? new Date(input.createdAt as Date) : now;
+      rec.updatedAt =
+        keepSystem && input.updatedAt ? new Date(input.updatedAt as Date) : now;
       return rec;
     });
 
@@ -309,10 +363,22 @@ export class Model<S extends Schema = Schema> {
       rec: { ...(t.row as Rec), ...clean, updatedAt: now },
     }));
 
-    const touchedUnique = Object.keys(clean).filter((k) => this.fields[k]!.unique);
-    if (touchedUnique.length) this.assertUnique(next.map((n) => n.rec), all, touchedUnique);
+    const touchedUnique = Object.keys(clean).filter(
+      (k) => this.fields[k]!.unique,
+    );
+    if (touchedUnique.length)
+      this.assertUnique(
+        next.map((n) => n.rec),
+        all,
+        touchedUnique,
+      );
 
-    await this.driver!.update(next.map((n) => ({ rowNum: n.rowNum, values: this.toCells(n.rec, n.raw) })));
+    await this.driver!.update(
+      next.map((n) => ({
+        rowNum: n.rowNum,
+        values: this.toCells(n.rec, n.raw),
+      })),
+    );
     this.invalidate();
     return next.map((n) => n.rec as unknown as Row<S>);
   }
@@ -335,7 +401,9 @@ export class Model<S extends Schema = Schema> {
 
   /** Deletes all matching rows and returns how many were removed. */
   async delete(where: Where<Row<S>>): Promise<number> {
-    const targets = (await this.load(true)).filter((l) => matches(l.row, where));
+    const targets = (await this.load(true)).filter((l) =>
+      matches(l.row, where),
+    );
     if (!targets.length) return 0;
     await this.driver!.remove(targets.map((t) => t.rowNum));
     this.invalidate();
@@ -349,10 +417,19 @@ export class Model<S extends Schema = Schema> {
   /* ------------------------------ join ------------------------------ */
 
   /** Joins this model with another one (also across spreadsheets). See `join`. */
-  join<R extends object, As extends string, Many extends boolean = false, T extends JoinType = "left">(
+  join<
+    R extends object,
+    As extends string,
+    Many extends boolean = false,
+    T extends JoinType = "left",
+  >(
     other: Queryable<R>,
     opts: JoinOptions<Row<S>, R, As, Many, T>,
   ): Promise<Joined<Row<S>, R, As, Many, T>[]> {
-    return join<Row<S>, R, As, Many, T>(this as unknown as Queryable<Row<S>>, other, opts);
+    return join<Row<S>, R, As, Many, T>(
+      this as unknown as Queryable<Row<S>>,
+      other,
+      opts,
+    );
   }
 }

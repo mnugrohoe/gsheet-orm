@@ -27,12 +27,16 @@ export class SheetDriver implements Driver {
     return quoteSheet(this.cfg.tabName);
   }
 
-  async init(columns: ColumnSpec[], { migrate }: { migrate: boolean }): Promise<string[]> {
+  async init(
+    columns: ColumnSpec[],
+    { migrate }: { migrate: boolean },
+  ): Promise<string[]> {
     const sheets = await this.api.listSheets();
     let tab = sheets.find((s) => s.title === this.cfg.tabName);
 
     if (!tab) {
-      if (!this.cfg.create) throw new GSheetError("SCHEMA", `Tab "${this.cfg.tabName}" not found`);
+      if (!this.cfg.create)
+        throw new GSheetError("SCHEMA", `Tab "${this.cfg.tabName}" not found`);
       const res = await this.api.batchUpdate([
         {
           addSheet: {
@@ -49,7 +53,9 @@ export class SheetDriver implements Driver {
     this.sheetId = tab.sheetId;
 
     const first = await this.api.getValues(`${this.q}!1:1`);
-    const existing = (first[0] ?? []).map((c) => String(c ?? "")).filter(Boolean);
+    const existing = (first[0] ?? [])
+      .map((c) => String(c ?? ""))
+      .filter(Boolean);
     const missing = columns.filter((c) => !existing.includes(c.name));
 
     if (missing.length && !migrate && existing.length) {
@@ -68,7 +74,9 @@ export class SheetDriver implements Driver {
   }
 
   async read(): Promise<RawRow[]> {
-    const values = await this.api.getValues(`${this.q}!A2:${colLetter(this.width)}`);
+    const values = await this.api.getValues(
+      `${this.q}!A2:${colLetter(this.width)}`,
+    );
     return values.map((v, i) => ({ rowNum: i + 2, values: v }));
   }
 
@@ -97,7 +105,12 @@ export class SheetDriver implements Driver {
       .sort((a, b) => b - a)
       .map((rowNum) => ({
         deleteDimension: {
-          range: { sheetId: this.sheetId, dimension: "ROWS", startIndex: rowNum - 1, endIndex: rowNum },
+          range: {
+            sheetId: this.sheetId,
+            dimension: "ROWS",
+            startIndex: rowNum - 1,
+            endIndex: rowNum,
+          },
         },
       }));
     await this.api.batchUpdate(requests);

@@ -9,4 +9,5 @@ export function colLetter(n: number): string {
   return s;
 }
 
-export const quoteSheet = (title: string): string => `'${title.replace(/'/g, "''")}'`;
+export const quoteSheet = (title: string): string =>
+  `'${title.replace(/'/g, "''")}'`;

@@ -1,6 +1,6 @@
 import { sheets_v4 } from '@googleapis/sheets';
-import { W as Where, O as OrderBy, S as Schema, M as ModelOptions, F as FindOptions, R as Row, C as CreateInput, a as SystemFields, U as UpdateInput, D as Driver, b as DateFormat, c as ColumnSpec, d as RawRow, e as Cell } from './types-B5M3qurL.cjs';
-export { f as FieldDef, g as FieldType, I as InferRow, h as Operator } from './types-B5M3qurL.cjs';
+import { W as Where, O as OrderBy, S as Schema, M as ModelOptions, F as FindOptions, R as Row, C as CreateInput, a as SystemFields, U as UpdateInput, D as Driver, b as DateFormat, c as ColumnSpec, d as RawRow, e as Cell } from './types-Dn6p4KTB.cjs';
+export { f as FieldDef, g as FieldType, I as InferRow, h as Operator } from './types-Dn6p4KTB.cjs';
 
 interface ClientOptions {
     /** Default spreadsheet. Optional when every model passes its own (or uses shards). */
@@ -178,6 +178,31 @@ interface ShardedOptions extends Omit<ModelOptions, "spreadsheetId" | "driver"> 
     /** Max spreadsheets queried in parallel. Default 4. */
     concurrency?: number;
 }
+interface FindPageOptions<R> {
+    where?: Where<R>;
+    /** Rows per page. Default 20. */
+    pageSize?: number;
+    /** `cursor` of the previous page. Omit or pass null for the first page. */
+    cursor?: string | null;
+    /** "desc" (default): newest spreadsheet and newest rows first. "asc": oldest first. */
+    order?: "asc" | "desc";
+    /**
+     * true (default): when a spreadsheet runs out mid-page, read the next one to fill the page.
+     * false: return the short page as it is, and read the next spreadsheet on the next call.
+     */
+    fill?: boolean;
+    /** Skip the read cache. */
+    fresh?: boolean;
+}
+interface Page<R> {
+    rows: R[];
+    /** Pass this as `cursor` to get the next page. null means there is nothing more to read. */
+    cursor: string | null;
+    /** true when `cursor` is set. Older spreadsheets that were not read yet count as "maybe more". */
+    hasMore: boolean;
+    /** Labels of the spreadsheets that were read for this page. */
+    readShards: string[];
+}
 /** Options of `db.model` when the model is split over the db-level (or its own) shards. */
 type PartitionedModelOptions = Omit<ShardedOptions, "shards"> & {
     /** Overrides the shards declared on GSheetDB for this model only. */
@@ -217,6 +242,26 @@ declare class ShardedModel<S extends Schema = Schema> {
     findById(id: string, hint?: unknown): Promise<Row<S> | null>;
     private findByIdIn;
     count(where?: Where<Row<S>>): Promise<number>;
+    /**
+     * Cursor paging over the spreadsheets, newest first by default.
+     *
+     * It reads only the newest spreadsheet until its rows are used up, then moves on to the
+     * next one, so a "latest rows" screen costs one spreadsheet read and old years are never
+     * touched unless the user keeps paging. Rows are ordered by the partition field, ties by id.
+     *
+     * The cursor is a position (not an offset), so rows added or removed between two calls do
+     * not cause duplicates or gaps. Turn on the model `cache` to avoid re-reading the same
+     * spreadsheet for every page.
+     */
+    findPage(opts?: FindPageOptions<Row<S>>): Promise<Page<Row<S>>>;
+    private isAfter;
+    /** Walks all pages lazily. Stop early with `break` and the remaining spreadsheets are never read. */
+    pages(opts?: Omit<FindPageOptions<Row<S>>, "cursor">): AsyncGenerator<Row<S>[], void, undefined>;
+    /** The newest `limit` rows (default 20), reading as few spreadsheets as possible. */
+    findLatest(limit?: number, opts?: {
+        where?: Where<Row<S>>;
+        fresh?: boolean;
+    }): Promise<Row<S>[]>;
     create(data: CreateInput<S>): Promise<Row<S>>;
     /**
      * Routes each item to its spreadsheet. Spreadsheets cannot share a transaction, so if one
@@ -365,4 +410,4 @@ declare class SheetDriver implements Driver {
     remove(rowNums: number[]): Promise<void>;
 }
 
-export { Cell, type ClientOptions, ColumnSpec, CreateInput, DateFormat, Driver, type ErrorCode, FindOptions, GSheetDB, type GSheetDBOptions, GSheetError, type JoinOptions, type JoinType, type Joined, Model, ModelOptions, OrderBy, type PartitionedModelOptions, type Queryable, RawRow, Row, Schema, type ShardDef, ShardedModel, type ShardedOptions, SheetDriver, type SheetMeta, SheetsApi, type SheetsApiLike, SystemFields, TableDriver, type TableMeta, UpdateInput, Where, join, resolveDriver };
+export { Cell, type ClientOptions, ColumnSpec, CreateInput, DateFormat, Driver, type ErrorCode, FindOptions, type FindPageOptions, GSheetDB, type GSheetDBOptions, GSheetError, type JoinOptions, type JoinType, type Joined, Model, ModelOptions, OrderBy, type Page, type PartitionedModelOptions, type Queryable, RawRow, Row, Schema, type ShardDef, ShardedModel, type ShardedOptions, SheetDriver, type SheetMeta, SheetsApi, type SheetsApiLike, SystemFields, TableDriver, type TableMeta, UpdateInput, Where, join, resolveDriver };
