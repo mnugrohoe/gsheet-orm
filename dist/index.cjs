@@ -1059,23 +1059,38 @@ var ShardedModel = class {
     const def = schema[partitionBy];
     const type = typeof def === "string" ? def : def?.type;
     if (type !== "date" && type !== "number") {
-      throw new GSheetError("SCHEMA", `[${name}] partitionBy "${partitionBy}" must be a "date" or "number" field in the schema`);
+      throw new GSheetError(
+        "SCHEMA",
+        `[${name}] partitionBy "${partitionBy}" must be a "date" or "number" field in the schema`
+      );
     }
-    if (!shards.length) throw new GSheetError("SCHEMA", `[${name}] at least one shard is required`);
+    if (!shards.length)
+      throw new GSheetError(
+        "SCHEMA",
+        `[${name}] at least one shard is required`
+      );
     this.field = partitionBy;
     this.fieldType = type;
     this.limit = concurrency ?? 4;
     const bound = (v, what) => {
       if (v === void 0) return void 0;
       const k = toKey(v, type);
-      if (k === null) throw new GSheetError("SCHEMA", `[${name}] invalid shard ${what}: ${String(v)}`);
+      if (k === null)
+        throw new GSheetError(
+          "SCHEMA",
+          `[${name}] invalid shard ${what}: ${String(v)}`
+        );
       return k;
     };
     this.shards = shards.map((sd) => {
       let from = bound(sd.from, "from");
       let to = bound(sd.to, "to");
       if (sd.years) {
-        if (type !== "date") throw new GSheetError("SCHEMA", `[${name}] "years" needs a date partition field`);
+        if (type !== "date")
+          throw new GSheetError(
+            "SCHEMA",
+            `[${name}] "years" needs a date partition field`
+          );
         const [y1, y2] = sd.years;
         from = Date.UTC(y1, 0, 1);
         to = y2 === null ? void 0 : Date.UTC(y2 + 1, 0, 1);
@@ -1084,7 +1099,12 @@ var ShardedModel = class {
       const model = new Model(
         name,
         schema,
-        { ...modelOpts, table: sd.table ?? modelOpts.table, sheet: sd.sheet ?? modelOpts.sheet, driver: sd.driver },
+        {
+          ...modelOpts,
+          table: sd.table ?? modelOpts.table,
+          sheet: sd.sheet ?? modelOpts.sheet,
+          driver: sd.driver
+        },
         () => getApi(sd.spreadsheetId)
       );
       return { spreadsheetId: sd.spreadsheetId, label, from, to, model };
@@ -1092,11 +1112,17 @@ var ShardedModel = class {
     for (let i = 0; i < this.shards.length; i++) {
       const s = this.shards[i];
       if (s.from !== void 0 && s.to !== void 0 && s.from >= s.to) {
-        throw new GSheetError("SCHEMA", `[${name}] shard "${s.label}" has an empty range`);
+        throw new GSheetError(
+          "SCHEMA",
+          `[${name}] shard "${s.label}" has an empty range`
+        );
       }
       const next = this.shards[i + 1];
       if (next && (s.to === void 0 || s.to > (next.from ?? -Infinity))) {
-        throw new GSheetError("SCHEMA", `[${name}] shards "${s.label}" and "${next.label}" overlap`);
+        throw new GSheetError(
+          "SCHEMA",
+          `[${name}] shards "${s.label}" and "${next.label}" overlap`
+        );
       }
     }
   }
@@ -1111,11 +1137,18 @@ var ShardedModel = class {
   }
   shardFor(value) {
     const k = this.key(value);
-    if (k === null) throw new GSheetError("VALIDATION", `[${this.name}] "${this.field}" is required to pick a spreadsheet`);
+    if (k === null)
+      throw new GSheetError(
+        "VALIDATION",
+        `[${this.name}] "${this.field}" is required to pick a spreadsheet`
+      );
     const shard = this.shards.find((s) => contains(s, k));
     if (!shard) {
       const shown = value instanceof Date ? value.toISOString() : String(value);
-      throw new GSheetError("SHARD", `[${this.name}] no spreadsheet covers ${this.field}=${shown}`);
+      throw new GSheetError(
+        "SHARD",
+        `[${this.name}] no spreadsheet covers ${this.field}=${shown}`
+      );
     }
     return shard;
   }
@@ -1137,7 +1170,8 @@ var ShardedModel = class {
       }
       if (Array.isArray(c.in)) {
         const ks = c.in.map(num);
-        if (ks.every((k) => k !== null)) checks.push((s) => ks.some((k) => contains(s, k)));
+        if (ks.every((k) => k !== null))
+          checks.push((s) => ks.some((k) => contains(s, k)));
       }
       for (const op of ["gt", "gte"]) {
         const k = c[op] === void 0 ? null : num(c[op]);
@@ -1146,7 +1180,9 @@ var ShardedModel = class {
       for (const op of ["lt", "lte"]) {
         const k = c[op] === void 0 ? null : num(c[op]);
         if (k !== null) {
-          checks.push((s) => s.from === void 0 || (op === "lte" ? k >= s.from : k > s.from));
+          checks.push(
+            (s) => s.from === void 0 || (op === "lte" ? k >= s.from : k > s.from)
+          );
         }
       }
     }
@@ -1154,7 +1190,10 @@ var ShardedModel = class {
   }
   /** Which spreadsheets a query with this `where` would touch. Handy to check pruning. */
   shardsFor(where) {
-    return this.pick(where).map(({ spreadsheetId, label }) => ({ spreadsheetId, label }));
+    return this.pick(where).map(({ spreadsheetId, label }) => ({
+      spreadsheetId,
+      label
+    }));
   }
   /** "table" or "sheet" for each spreadsheet, in range order (undefined until connected). */
   get sources() {
@@ -1175,7 +1214,10 @@ var ShardedModel = class {
     );
     const merged = sortRows(lists.flat(), opts.orderBy);
     const start = opts.offset ?? 0;
-    return merged.slice(start, opts.limit != null ? start + opts.limit : void 0);
+    return merged.slice(
+      start,
+      opts.limit != null ? start + opts.limit : void 0
+    );
   }
   async findFirst(where) {
     for (const s of this.pick(where)) {
@@ -1197,7 +1239,11 @@ var ShardedModel = class {
     return null;
   }
   async count(where) {
-    const counts = await mapLimit(this.pick(where), this.limit, (s) => s.model.count(where));
+    const counts = await mapLimit(
+      this.pick(where),
+      this.limit,
+      (s) => s.model.count(where)
+    );
     return counts.reduce((a, b) => a + b, 0);
   }
   /* ------------------------------ paging ------------------------------ */
@@ -1332,17 +1378,27 @@ var ShardedModel = class {
    * leaves a duplicate rather than losing data.
    */
   async updateIn(shards, where, data) {
-    const patch = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== void 0));
+    const patch = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== void 0)
+    );
     if (!(this.field in patch)) {
-      const lists = await mapLimit(shards, this.limit, (s) => s.model.update(where, patch));
+      const lists = await mapLimit(
+        shards,
+        this.limit,
+        (s) => s.model.update(where, patch)
+      );
       return lists.flat();
     }
     const target = this.shardFor(patch[this.field]);
-    const ordered = [...shards].sort((a, b) => Number(b === target) - Number(a === target));
+    const ordered = [...shards].sort(
+      (a, b) => Number(b === target) - Number(a === target)
+    );
     const results = [];
     for (const shard of ordered) {
       if (shard === target) {
-        results.push(...await shard.model.update(where, patch));
+        results.push(
+          ...await shard.model.update(where, patch)
+        );
         continue;
       }
       const rows = await shard.model.findMany({ where, fresh: true });
@@ -1350,7 +1406,9 @@ var ShardedModel = class {
       const ids = new Set(rows.map((r) => r.id));
       const now = /* @__PURE__ */ new Date();
       const moved = await target.model.importMany(
-        rows.map((r) => ({ ...r, ...patch, updatedAt: now }))
+        rows.map(
+          (r) => ({ ...r, ...patch, updatedAt: now })
+        )
       );
       await shard.model.delete(((row) => ids.has(row.id)));
       results.push(...moved);
@@ -1359,17 +1417,29 @@ var ShardedModel = class {
   }
   async upsert(where, data) {
     for (const shard of this.pick(where)) {
-      const [found] = await shard.model.findMany({ where, limit: 1, fresh: true });
+      const [found] = await shard.model.findMany({
+        where,
+        limit: 1,
+        fresh: true
+      });
       if (found) {
         const { id: _ignored, ...rest } = data;
-        return (await this.updateIn([shard], { id: found.id }, rest))[0];
+        return (await this.updateIn(
+          [shard],
+          { id: found.id },
+          rest
+        ))[0];
       }
     }
     return this.create(data);
   }
   /* ------------------------------ delete ------------------------------ */
   async delete(where) {
-    const counts = await mapLimit(this.pick(where), this.limit, (s) => s.model.delete(where));
+    const counts = await mapLimit(
+      this.pick(where),
+      this.limit,
+      (s) => s.model.delete(where)
+    );
     return counts.reduce((a, b) => a + b, 0);
   }
   async deleteById(id, hint) {
@@ -1379,7 +1449,11 @@ var ShardedModel = class {
   /* ------------------------------ join ------------------------------ */
   /** Joins with another model. The other side can be sharded too. See `join`. */
   join(other, opts) {
-    return join(this, other, opts);
+    return join(
+      this,
+      other,
+      opts
+    );
   }
 };
 var encodeCursor = (c) => Buffer.from(JSON.stringify(c)).toString("base64url");
