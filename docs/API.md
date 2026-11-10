@@ -147,16 +147,39 @@ Empty cells read as `null`. Table column types are only set when the library cre
 | `unique`   | all         | No two rows may have the same value. Checked on `create`, `createMany`, `update`, `importMany`. `null` is ignored. |
 | `default`  | all         | A value, or a function called once per row. Used on create when the field is `undefined`.             |
 | `enum`     | `"string"`  | Allowed values. Validated on write. Becomes a dropdown column in a new table. Use `as const` for literal types. |
+| `auto`     | `"date"`    | `"create"`: set to now when the row is created. `"update"`: set to now on create and on every update. See [timestamps](#row-id-and-timestamps). |
 
-### Automatic fields
+### Row id and timestamps
 
-Every row also has these. The names are reserved, and defining them in a schema throws `SCHEMA`.
+**The only column the library adds is the row id.** Nothing else is written to your sheet unless you declare it.
 
-| Field       | Type     | Description                                                          |
-| ----------- | -------- | -------------------------------------------------------------------- |
-| `id`        | `string` | UUID generated on create. You can pass your own `id` to `create`.    |
-| `createdAt` | `Date`   | Set on create.                                                       |
-| `updatedAt` | `Date`   | Set on create and on every update.                                   |
+| | |
+| --- | --- |
+| `id` | Every row has an `id` property (a `string`). It identifies the row for `findById`, `updateById`, `deleteById` and `upsert`. A UUID is generated on create, or pass your own `id` to `create`. `id` is a reserved field name. |
+| `idColumn` | Header of the column that holds the id. Default `"id"`. Set it to a column you already have, for example `"TransId"`, and no extra column is added. Do not also declare that column as a field. |
+| timestamps | Not added by default. Declare date fields with `auto` to get them. |
+
+```ts
+// use the column you already have as the id, and add no timestamps
+const Transactions = db.model("Transaction", { Date: { type: "date", required: true }, Amount: "number" }, {
+  idColumn: "TransId",
+});
+await Transactions.create({ id: "T-001", Date: new Date(), Amount: 10 });   // written to the TransId column
+const t = await Transactions.findById("T-001");                             // t.id === "T-001"
+
+// timestamps are opt-in: declare them like any other field
+const Item = db.model("items", {
+  name: "string",
+  createdAt: { type: "date", auto: "create" },   // set once, on create
+  updatedAt: { type: "date", auto: "update" },   // set on create and refreshed on every update
+});
+```
+
+Notes:
+
+- With the default `id` column, rows typed in by hand in Sheets get an id assigned the next time the model reads (`healIds`). With a custom `idColumn` this is **off**, so your own ids are never overwritten. A row without an id can still be reached with `where` (for example `update({ Name: "x" }, ...)`), but not with the `...ById` methods.
+- You can pass `auto` fields yourself, for example to back-fill old rows. A value you give wins.
+- `auto` only works on `"date"` fields.
 
 ### Type helpers
 
@@ -164,7 +187,7 @@ Every row also has these. The names are reserved, and defining them in a schema 
 import type { InferRow } from "@mnugrohoe/gsheet-orm";
 
 type ItemRow = InferRow<typeof Item>;
-// { id: string; createdAt: Date; updatedAt: Date;
+// { id: string;
 //   sku: string; name: string; stock: number | null;
 //   status: "active" | "retired" | null; meta: unknown; seenAt: Date | null }
 ```
@@ -185,7 +208,8 @@ Third argument of `db.model`. Everything is optional.
 | `sheet`         | model name | Tab name to look for or create.                                                                   |
 | `create`        | `true`   | Create the tab and table when missing. With `false` a missing one throws `SCHEMA`.                  |
 | `migrate`       | `true`   | Add schema columns missing from the header. With `false` a missing column throws `SCHEMA`.          |
-| `healIds`       | `true`   | Give an `id` (and timestamps) to rows typed in by hand in Sheets, the next time the model reads.    |
+| `idColumn`      | `"id"`   | Header of the column that holds the row id. Set it to an existing column such as `"TransId"` to avoid an extra column. See [Row id and timestamps](#row-id-and-timestamps). |
+| `healIds`       | `true` (`false` with a custom `idColumn`) | Give an `id` to rows typed in by hand in Sheets, the next time the model reads. |
 | `cache`         | off      | `{ ttlMs: number }`. See [Caching](#caching).                                                       |
 | `driver`        | none     | Custom storage, mostly for tests. See [Testing](#testing).                                          |
 
@@ -316,12 +340,12 @@ Notes:
 
 ### `create(data)`
 
-Inserts one row and returns it, with `id`, `createdAt` and `updatedAt` filled in.
+Inserts one row and returns it, with its `id` (and any `auto` date fields) filled in.
 
 ```ts
 const item = await Item.create({ sku: "A-001", name: "Oil filter", stock: 12 });
 // { id: "…", sku: "A-001", name: "Oil filter", stock: 12, status: "active",
-//   meta: null, seenAt: null, createdAt: Date, updatedAt: Date }
+//   meta: null, seenAt: null }
 
 await Item.create({ sku: "A-002", name: "Belt", meta: { supplier: "PT X", tags: ["fan"] } });
 await Item.create({ id: "my-own-id", sku: "A-003", name: "Hose" });
@@ -342,7 +366,7 @@ const rows = await Item.createMany([
 
 ### `update(where, data)`
 
-Updates every matching row and returns the updated rows (empty array if none matched). Only the fields you pass change, `updatedAt` is refreshed, `undefined` values are ignored, and columns the model does not manage are left untouched.
+Updates every matching row and returns the updated rows (empty array if none matched). Only the fields you pass change, fields with `auto: "update"` are refreshed, `undefined` values are ignored, and columns the model does not manage are left untouched.
 
 ```ts
 const changed = await Item.update({ status: "active", stock: 0 }, { status: "retired" });
@@ -352,7 +376,7 @@ await Item.update({ sku: "A-001" }, { stock: 8, meta: { note: "recount" } });
 await Item.update({ sku: "A-001" }, { seenAt: null }); // clear a field
 ```
 
-Throws `VALIDATION` (also when setting a required field to `null`) or `UNIQUE`. Setting a `unique` field on several rows at once throws `UNIQUE`. `id` and `createdAt` cannot be updated.
+Throws `VALIDATION` (also when setting a required field to `null`) or `UNIQUE`. Setting a `unique` field on several rows at once throws `UNIQUE`. `id` cannot be updated.
 
 ### `updateById(id, data)`
 
@@ -392,9 +416,15 @@ const ok = await Item.deleteById(item.id);
 
 ### `importMany(rows)`
 
-Inserts rows as they are, keeping the `id`, `createdAt` and `updatedAt` you give. Defaults, validation and `unique` still apply. Use it to back-fill data, copy between spreadsheets, or move rows.
+Same as `createMany`. Ids and values you give (including `auto` date fields) are kept as they are, and defaults, validation and `unique` still apply. Use it when you move or back-fill rows, for example to copy data between spreadsheets.
 
 ```ts
+const Item = db.model("items", {
+  sku: "string",
+  name: "string",
+  createdAt: { type: "date", auto: "create" },
+});
+
 await Item.importMany([
   { id: "legacy-1", sku: "OLD-1", name: "Old part", createdAt: new Date("2020-05-01") },
 ]);
@@ -488,7 +518,7 @@ A sharded model has the same methods as a normal model: `findMany`, `findFirst`,
 | `findMany`, `count`, `findFirst`, `update`, `delete` | Only spreadsheets that can match the `where` on the partition field are touched (`eq`, `in`, `gt`, `gte`, `lt`, `lte`). Any other `where`, or a predicate function, touches all of them. |
 | `findMany` over several | Rows are merged, then `orderBy`, `offset` and `limit` apply to the whole result. Without `orderBy` you get range order. |
 | `findById(id, hint?)`, `updateById(id, data, hint?)`, `deleteById(id, hint?)` | An id does not tell which spreadsheet holds it, so they search from newest to oldest. Pass a partition value as `hint` to read only one spreadsheet. |
-| `update` that changes the partition field | The row moves to the spreadsheet that now owns it. It is inserted there first and deleted from the old one after, so a failure leaves a duplicate and not a loss. `id` and `createdAt` are kept. |
+| `update` that changes the partition field | The row moves to the spreadsheet that now owns it. It is inserted there first and deleted from the old one after, so a failure leaves a duplicate and not a loss. The `id` and all other values are kept, and `auto: "update"` fields are refreshed. |
 | `upsert` | Looks for a match in the candidate spreadsheets, otherwise creates in the right one. |
 
 ```ts
@@ -677,6 +707,22 @@ Notes:
 - Without `many: true`, a left row with several matches gets the first one.
 - A join result is plain data, not a model. To join three models, do two joins and merge in code, or join the smaller pair first.
 - It is an in-memory hash join, so the usual size limits apply.
+
+---
+
+## Existing sheets and sheet size
+
+**Your sheet is changed as little as possible.** The library adds the row id column (or uses your `idColumn`), plus the columns you declare. It never adds timestamp columns on its own. Columns that are not in your schema are left alone on updates.
+
+**The sheet grows by itself.** Google sheets have a fixed grid (1000 rows and 26 columns by default). When a table or tab reaches the bottom or the right edge, the library adds rows or columns before it writes, so inserts and new columns do not fail:
+
+| Situation | What happens |
+| --------- | ------------ |
+| Table or tab is at the bottom of the grid | 100 extra rows are added when needed (then a Table or tab keeps growing as usual) |
+| A new column does not fit on the right | The needed columns are added, then the column is written |
+| Google still reports "exceeds grid limits" | Rows are added once and the write is retried once |
+
+Rows below a Table are not moved by the library. If other data sits right under your table, leave some free rows or move it.
 
 ---
 
@@ -869,7 +915,7 @@ await Doc.findMany({ where: { status: "active" } });       // normal reads
 // Old: the model on the single big spreadsheet. Orders: the sharded model (same fields).
 const rows = await Old.findMany();
 
-// importMany keeps id, createdAt and updatedAt, and puts each row in the spreadsheet of its date
+// importMany keeps the id and every value, and puts each row in the spreadsheet of its date
 await Orders.importMany(rows);
 
 console.log(await Orders.count(), "rows imported");

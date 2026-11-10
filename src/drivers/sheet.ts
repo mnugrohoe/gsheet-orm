@@ -1,6 +1,7 @@
 import { colLetter, quoteSheet } from "../a1.js";
 import type { SheetsApiLike } from "../client.js";
 import { GSheetError } from "../errors.js";
+import { ROW_BUFFER, addColumnsRequest, addRowsRequest, isGridError } from "./grow.js";
 import type { Cell, ColumnSpec, DateFormat, Driver, RawRow } from "./driver.js";
 
 export interface SheetDriverConfig {
@@ -27,16 +28,12 @@ export class SheetDriver implements Driver {
     return quoteSheet(this.cfg.tabName);
   }
 
-  async init(
-    columns: ColumnSpec[],
-    { migrate }: { migrate: boolean },
-  ): Promise<string[]> {
+  async init(columns: ColumnSpec[], { migrate }: { migrate: boolean }): Promise<string[]> {
     const sheets = await this.api.listSheets();
     let tab = sheets.find((s) => s.title === this.cfg.tabName);
 
     if (!tab) {
-      if (!this.cfg.create)
-        throw new GSheetError("SCHEMA", `Tab "${this.cfg.tabName}" not found`);
+      if (!this.cfg.create) throw new GSheetError("SCHEMA", `Tab "${this.cfg.tabName}" not found`);
       const res = await this.api.batchUpdate([
         {
           addSheet: {
@@ -48,14 +45,12 @@ export class SheetDriver implements Driver {
         },
       ]);
       const sheetId: number = res.replies?.[0]?.addSheet?.properties?.sheetId;
-      tab = { sheetId, title: this.cfg.tabName, tables: [] };
+      tab = { sheetId, title: this.cfg.tabName, tables: [], columnCount: Math.max(26, columns.length) };
     }
     this.sheetId = tab.sheetId;
 
     const first = await this.api.getValues(`${this.q}!1:1`);
-    const existing = (first[0] ?? [])
-      .map((c) => String(c ?? ""))
-      .filter(Boolean);
+    const existing = (first[0] ?? []).map((c) => String(c ?? "")).filter(Boolean);
     const missing = columns.filter((c) => !existing.includes(c.name));
 
     if (missing.length && !migrate && existing.length) {
@@ -67,6 +62,10 @@ export class SheetDriver implements Driver {
 
     const header = [...existing, ...missing.map((m) => m.name)];
     if (missing.length) {
+      // the header grows to the right: make sure the sheet has the columns for it
+      if (tab.columnCount !== undefined && header.length > tab.columnCount) {
+        await this.api.batchUpdate([addColumnsRequest(tab.sheetId, header.length - tab.columnCount)]);
+      }
       await this.api.updateValues(`${this.q}!A1`, [header]);
     }
     this.width = header.length;
@@ -74,18 +73,21 @@ export class SheetDriver implements Driver {
   }
 
   async read(): Promise<RawRow[]> {
-    const values = await this.api.getValues(
-      `${this.q}!A2:${colLetter(this.width)}`,
-    );
+    const values = await this.api.getValues(`${this.q}!A2:${colLetter(this.width)}`);
     return values.map((v, i) => ({ rowNum: i + 2, values: v }));
   }
 
   async append(rows: Cell[][]): Promise<void> {
     if (!rows.length) return;
-    await this.api.appendValues(
-      `${this.q}!A1`,
-      rows.map((r) => Array.from({ length: this.width }, (_, i) => r[i] ?? "")),
-    );
+    const values = rows.map((r) => Array.from({ length: this.width }, (_, i) => r[i] ?? ""));
+    try {
+      await this.api.appendValues(`${this.q}!A1`, values);
+    } catch (err) {
+      if (!isGridError(err) || this.sheetId === undefined) throw err;
+      // the sheet ran out of rows: add some and retry once
+      await this.api.batchUpdate([addRowsRequest(this.sheetId, rows.length + ROW_BUFFER)]);
+      await this.api.appendValues(`${this.q}!A1`, values);
+    }
   }
 
   async update(rows: { rowNum: number; values: Cell[] }[]): Promise<void> {
@@ -105,12 +107,7 @@ export class SheetDriver implements Driver {
       .sort((a, b) => b - a)
       .map((rowNum) => ({
         deleteDimension: {
-          range: {
-            sheetId: this.sheetId,
-            dimension: "ROWS",
-            startIndex: rowNum - 1,
-            endIndex: rowNum,
-          },
+          range: { sheetId: this.sheetId, dimension: "ROWS", startIndex: rowNum - 1, endIndex: rowNum },
         },
       }));
     await this.api.batchUpdate(requests);

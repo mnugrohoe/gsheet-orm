@@ -10,7 +10,6 @@ import type {
   ModelOptions,
   Row,
   Schema,
-  SystemFields,
   UpdateInput,
   Where,
 } from "./types.js";
@@ -99,6 +98,7 @@ export class ShardedModel<S extends Schema = Schema> {
   private readonly field: string;
   private readonly fieldType: "date" | "number";
   private readonly limit: number;
+  private readonly autoUpdate: string[];
 
   constructor(
     readonly name: string,
@@ -117,6 +117,9 @@ export class ShardedModel<S extends Schema = Schema> {
     this.field = partitionBy;
     this.fieldType = type;
     this.limit = concurrency ?? 4;
+    this.autoUpdate = Object.entries(schema)
+      .filter(([, d]) => typeof d !== "string" && d.auto === "update")
+      .map(([k]) => k);
 
     const bound = (v: Date | string | number | undefined, what: string): number | undefined => {
       if (v === undefined) return undefined;
@@ -376,19 +379,19 @@ export class ShardedModel<S extends Schema = Schema> {
    * spreadsheet fails after another succeeded, the earlier inserts stay.
    */
   async createMany(items: CreateInput<S>[]): Promise<Row<S>[]> {
-    return this.insertRouted(items, false);
+    return this.insertRouted(items);
   }
 
   /**
-   * Like `createMany`, but keeps `id`, `createdAt` and `updatedAt` when given.
+   * Same as `createMany`: given ids and values (including `auto` date fields) are kept as they are.
    * Handy to split an existing table over the shards.
    */
-  async importMany(rows: (CreateInput<S> & Partial<SystemFields>)[]): Promise<Row<S>[]> {
-    return this.insertRouted(rows, true);
+  async importMany(rows: CreateInput<S>[]): Promise<Row<S>[]> {
+    return this.insertRouted(rows);
   }
 
-  private async insertRouted(items: (CreateInput<S> & Partial<SystemFields>)[], keepSystem: boolean): Promise<Row<S>[]> {
-    const groups = new Map<Shard<S>, { index: number; item: CreateInput<S> & Partial<SystemFields> }[]>();
+  private async insertRouted(items: CreateInput<S>[]): Promise<Row<S>[]> {
+    const groups = new Map<Shard<S>, { index: number; item: CreateInput<S> }[]>();
     items.forEach((item, index) => {
       const shard = this.shardFor((item as Rec)[this.field]);
       const list = groups.get(shard);
@@ -397,8 +400,7 @@ export class ShardedModel<S extends Schema = Schema> {
 
     const out = new Array<Row<S>>(items.length);
     await mapLimit([...groups], this.limit, async ([shard, list]) => {
-      const batch = list.map((l) => l.item);
-      const rows = keepSystem ? await shard.model.importMany(batch) : await shard.model.createMany(batch);
+      const rows = await shard.model.createMany(list.map((l) => l.item));
       rows.forEach((row, i) => (out[list[i]!.index] = row));
     });
     return out;
@@ -442,7 +444,11 @@ export class ShardedModel<S extends Schema = Schema> {
       const ids = new Set(rows.map((r) => r.id));
       const now = new Date();
       const moved = await target.model.importMany(
-        rows.map((r) => ({ ...r, ...patch, updatedAt: now }) as unknown as CreateInput<S>),
+        rows.map((r) => {
+          const next: Rec = { ...r, ...patch };
+          for (const k of this.autoUpdate) if (!(k in patch)) next[k] = now;
+          return next as unknown as CreateInput<S>;
+        }),
       );
       await shard.model.delete(((row: Row<S>) => ids.has(row.id)) as Where<Row<S>>);
       results.push(...moved);
@@ -454,6 +460,9 @@ export class ShardedModel<S extends Schema = Schema> {
     for (const shard of this.pick(where)) {
       const [found] = await shard.model.findMany({ where, limit: 1, fresh: true });
       if (found) {
+        if (!found.id) {
+          throw new GSheetError("VALIDATION", `[${this.name}] the matching row has no id, so it cannot be updated by upsert`);
+        }
         const { id: _ignored, ...rest } = data as Rec;
         return (await this.updateIn([shard], { id: found.id } as Where<Row<S>>, rest as UpdateInput<S>))[0]!;
       }

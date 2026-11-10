@@ -1,6 +1,6 @@
 import { sheets_v4 } from '@googleapis/sheets';
-import { W as Where, O as OrderBy, S as Schema, M as ModelOptions, F as FindOptions, R as Row, C as CreateInput, a as SystemFields, U as UpdateInput, D as Driver, b as DateFormat, c as ColumnSpec, d as RawRow, e as Cell } from './types-Dn6p4KTB.js';
-export { f as FieldDef, g as FieldType, I as InferRow, h as Operator } from './types-Dn6p4KTB.js';
+import { W as Where, O as OrderBy, S as Schema, M as ModelOptions, F as FindOptions, R as Row, C as CreateInput, U as UpdateInput, D as Driver, a as DateFormat, b as ColumnSpec, c as RawRow, d as Cell } from './types-BfjImFSN.js';
+export { e as FieldDef, f as FieldType, I as InferRow, g as Operator, h as SystemFields } from './types-BfjImFSN.js';
 
 interface ClientOptions {
     /** Default spreadsheet. Optional when every model passes its own (or uses shards). */
@@ -32,11 +32,17 @@ interface TableMeta {
     range: TableRange;
     columnProperties: any[];
     hasFooter: boolean;
+    /** Size of the sheet grid the table sits on (rows / columns), when known. */
+    gridRows?: number;
+    gridColumns?: number;
 }
 interface SheetMeta {
     sheetId: number;
     title: string;
     tables: TableMeta[];
+    /** Size of the grid, when known. A sheet cannot hold data outside of it. */
+    rowCount?: number;
+    columnCount?: number;
 }
 /** The slice of the Sheets API this library uses. Implemented by SheetsApi; fakeable in tests. */
 interface SheetsApiLike {
@@ -111,6 +117,8 @@ declare class Model<S extends Schema = Schema> {
     /** Phantom field used by InferRow. Never set at runtime. */
     readonly __schema?: S;
     private readonly fields;
+    private readonly idColumn;
+    private readonly autoFields;
     private readonly managed;
     private readonly columns;
     private driver?;
@@ -123,6 +131,8 @@ declare class Model<S extends Schema = Schema> {
     /** Connects, creates the tab/table if allowed and adds missing columns. Runs automatically. */
     sync(): Promise<void>;
     private init;
+    /** Property name of a column: the id column is exposed as `id`. */
+    private prop;
     private typeOf;
     private toRow;
     private toCells;
@@ -139,12 +149,14 @@ declare class Model<S extends Schema = Schema> {
     create(data: CreateInput<S>): Promise<Row<S>>;
     createMany(items: CreateInput<S>[]): Promise<Row<S>[]>;
     /**
-     * Inserts rows as they are, keeping their id / createdAt / updatedAt when given.
-     * Use it to move or back-fill rows (for example when splitting a table into shards).
+     * Same as `createMany`. Given ids and values (including `auto` date fields) are kept as they are,
+     * which is what you want when moving or back-filling rows, for example when splitting a table into shards.
      */
-    importMany(rows: (CreateInput<S> & Partial<SystemFields>)[]): Promise<Row<S>[]>;
+    importMany(rows: CreateInput<S>[]): Promise<Row<S>[]>;
     private insert;
     update(where: Where<Row<S>>, data: UpdateInput<S>): Promise<Row<S>[]>;
+    private applyUpdate;
+    private requireId;
     updateById(id: string, data: UpdateInput<S>): Promise<Row<S> | null>;
     /** Updates the first match, or creates a new row when nothing matches. */
     upsert(where: Where<Row<S>>, data: CreateInput<S>): Promise<Row<S>>;
@@ -220,6 +232,7 @@ declare class ShardedModel<S extends Schema = Schema> {
     private readonly field;
     private readonly fieldType;
     private readonly limit;
+    private readonly autoUpdate;
     constructor(name: string, schema: S, opts: ShardedOptions, getApi: (spreadsheetId: string) => SheetsApiLike);
     private key;
     private shardFor;
@@ -269,10 +282,10 @@ declare class ShardedModel<S extends Schema = Schema> {
      */
     createMany(items: CreateInput<S>[]): Promise<Row<S>[]>;
     /**
-     * Like `createMany`, but keeps `id`, `createdAt` and `updatedAt` when given.
+     * Same as `createMany`: given ids and values (including `auto` date fields) are kept as they are.
      * Handy to split an existing table over the shards.
      */
-    importMany(rows: (CreateInput<S> & Partial<SystemFields>)[]): Promise<Row<S>[]>;
+    importMany(rows: CreateInput<S>[]): Promise<Row<S>[]>;
     private insertRouted;
     update(where: Where<Row<S>>, data: UpdateInput<S>): Promise<Row<S>[]>;
     updateById(id: string, data: UpdateInput<S>, hint?: unknown): Promise<Row<S> | null>;
@@ -410,4 +423,4 @@ declare class SheetDriver implements Driver {
     remove(rowNums: number[]): Promise<void>;
 }
 
-export { Cell, type ClientOptions, ColumnSpec, CreateInput, DateFormat, Driver, type ErrorCode, FindOptions, type FindPageOptions, GSheetDB, type GSheetDBOptions, GSheetError, type JoinOptions, type JoinType, type Joined, Model, ModelOptions, OrderBy, type Page, type PartitionedModelOptions, type Queryable, RawRow, Row, Schema, type ShardDef, ShardedModel, type ShardedOptions, SheetDriver, type SheetMeta, SheetsApi, type SheetsApiLike, SystemFields, TableDriver, type TableMeta, UpdateInput, Where, join, resolveDriver };
+export { Cell, type ClientOptions, ColumnSpec, CreateInput, DateFormat, Driver, type ErrorCode, FindOptions, type FindPageOptions, GSheetDB, type GSheetDBOptions, GSheetError, type JoinOptions, type JoinType, type Joined, Model, ModelOptions, OrderBy, type Page, type PartitionedModelOptions, type Queryable, RawRow, Row, Schema, type ShardDef, ShardedModel, type ShardedOptions, SheetDriver, type SheetMeta, SheetsApi, type SheetsApiLike, TableDriver, type TableMeta, UpdateInput, Where, join, resolveDriver };

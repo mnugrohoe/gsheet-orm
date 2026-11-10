@@ -12,6 +12,8 @@ const schema = {
   meta: "json",
   seenAt: "date",
   hot: { type: "boolean", default: false },
+  createdAt: { type: "date", auto: "create" },
+  updatedAt: { type: "date", auto: "update" },
 } as const;
 
 for (const kind of ["sheet", "table"] as const) {
@@ -176,7 +178,7 @@ describe("schema guards", () => {
   it("infers row types", () => {
     const M = db.model("t", { n: { type: "number", required: true }, s: "string" });
     type R = InferRow<typeof M>;
-    const r: R = { id: "1", createdAt: new Date(), updatedAt: new Date(), n: 1, s: null };
+    const r: R = { id: "1", n: 1, s: null };
     expect(r.n).toBe(1);
   });
 });

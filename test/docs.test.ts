@@ -15,6 +15,8 @@ const schema = {
   status: { type: "string", enum: ["active", "retired"], default: "active" },
   meta: "json",
   seenAt: "date",
+  createdAt: { type: "date", auto: "create" },
+  updatedAt: { type: "date", auto: "update" },
 } as const;
 
 let Item: ReturnType<typeof makeItem>;
@@ -178,6 +180,8 @@ describe("docs: sharding, joins and recipes", () => {
     customerId: "string",
     date: { type: "date", required: true },
     total: { type: "number", default: 0 },
+    createdAt: { type: "date", auto: "create" },
+    updatedAt: { type: "date", auto: "update" },
   } as const;
   const customerSchema = { name: { type: "string", required: true }, tier: "string" } as const;
 

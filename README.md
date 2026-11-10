@@ -126,7 +126,7 @@ It has the same methods as a normal model (`findMany`, `create`, `update`, `upse
 | `findMany` / `count` / `update` / `delete` | Only spreadsheets that can match the `where` on the partition field are read (`eq`, `in`, `gt`, `gte`, `lt`, `lte`). No filter on that field means all of them.   |
 | `findMany` across several                  | Results are merged, then sorted, offset and limited as a whole. Without `orderBy` you get range order.                                                            |
 | `findById(id, hint?)`                      | An id says nothing about the year, so it scans newest to oldest. Pass a date as `hint` to read one spreadsheet.                                                   |
-| `update` of the partition field            | The row moves to the spreadsheet that now owns it (inserted first, deleted after, so a failure leaves a duplicate and not a loss). `id` and `createdAt` are kept. |
+| `update` of the partition field            | The row moves to the spreadsheet that now owns it (inserted first, deleted after, so a failure leaves a duplicate and not a loss). The `id` and all values are kept. |
 
 **Latest first, without reading every year.** `findPage` reads the newest spreadsheet first and only moves to the next one when it is used up:
 
@@ -187,7 +187,7 @@ It reads the left side first, then only the right rows whose key appears on the 
 
 ## Moving rows yourself
 
-`importMany(rows)` inserts rows as given, keeping `id`, `createdAt` and `updatedAt`. It exists on normal and sharded models. Use it to back-fill a new spreadsheet or to split an old table into shards:
+`importMany(rows)` inserts rows as given, keeping the `id` and every value you pass (including `auto` date fields). It exists on normal and sharded models. Use it to back-fill a new spreadsheet or to split an old table into shards:
 
 ```ts
 await Orders.importMany(await OldOrders.findMany());
@@ -195,12 +195,29 @@ await Orders.importMany(await OldOrders.findMany());
 
 ## Schema
 
-Fields are `"string" | "number" | "boolean" | "date" | "json"` or `{ type, required?, unique?, default?, enum? }`. `id` (uuid), `createdAt` and `updatedAt` are added automatically and are reserved names.
+Fields are `"string" | "number" | "boolean" | "date" | "json"` or `{ type, required?, unique?, default?, enum?, auto? }`.
+
+**The only column the library adds is the row id** (`id`, a UUID). Use a column you already have with `idColumn`, and add timestamps only if you want them:
+
+```ts
+const Transactions = db.model(
+  "Transaction",
+  {
+    Date: { type: "date", required: true },
+    Amount: "number",
+    updatedAt: { type: "date", auto: "update" }, // optional: set on create and on every update
+  },
+  { idColumn: "TransId" }, // the `id` property lives in your existing TransId column
+);
+```
+
+Details: [row id and timestamps](./docs/API.md#row-id-and-timestamps).
 
 - Writes are validated: required, type, `enum`, unique, unknown field.
 - Extra columns you add by hand in Sheets are left untouched on update.
 - Columns missing from the header are added (`migrate: true`, the default).
-- Rows typed in by hand in Sheets get an `id` assigned the next time the model reads them (`healIds: true`, the default).
+- Rows typed in by hand in Sheets get an `id` assigned the next time the model reads them (`healIds`, on by default, off when you set `idColumn`).
+- The sheet grows by itself: rows and columns are added when a table or tab reaches the bottom or right edge of the grid.
 - Values are stored raw, so text like `=1+1` stays text and never runs as a formula.
 
 ## API at a glance
@@ -232,7 +249,8 @@ db.model(name, schema, {
   sheet, // names, default: model name
   create: true, // create tab/table when missing
   migrate: true, // add missing columns
-  healIds: true, // give hand-added rows an id
+  idColumn: "id", // header of the row id column, e.g. "TransId" to reuse a column you have
+  healIds: true, // give hand-added rows an id (default off with a custom idColumn)
   cache: { ttlMs: 5000 }, // optional read cache, invalidated by writes
 });
 ```

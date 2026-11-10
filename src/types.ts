@@ -10,15 +10,18 @@ export interface FieldDef {
   default?: unknown;
   /** string fields only. Validated on write; becomes a dropdown column in Table mode. */
   enum?: readonly string[];
+  /**
+   * date fields only. Filled in by the library:
+   * "create": set to now when the row is created.
+   * "update": set to now when the row is created and on every update.
+   * Nothing is added to your sheet unless you declare such a field.
+   */
+  auto?: "create" | "update";
 }
 
 export type Schema = Record<string, FieldType | FieldDef>;
 
-type TypeName<F> = F extends FieldType
-  ? F
-  : F extends { type: infer T }
-    ? T
-    : never;
+type TypeName<F> = F extends FieldType ? F : F extends { type: infer T } ? T : never;
 type EnumOf<F> = F extends { enum: readonly (infer E)[] } ? E : never;
 type Base<T> = T extends "string"
   ? string
@@ -30,37 +33,24 @@ type Base<T> = T extends "string"
         ? Date
         : unknown;
 
-export type ValueOf<F> =
-  | ([EnumOf<F>] extends [never] ? Base<TypeName<F>> : EnumOf<F>)
-  | (F extends { required: true } ? never : null);
+export type ValueOf<F> = ([EnumOf<F>] extends [never] ? Base<TypeName<F>> : EnumOf<F>) |
+  (F extends { required: true } ? never : F extends { auto: "create" | "update" } ? never : null);
 
-export type SystemFields = { id: string; createdAt: Date; updatedAt: Date };
+export type SystemFields = { id: string };
 
-export type Row<S extends Schema> = SystemFields & {
-  -readonly [K in keyof S]: ValueOf<S[K]>;
-};
+export type Row<S extends Schema> = SystemFields & { -readonly [K in keyof S]: ValueOf<S[K]> };
 
 type RequiredKeys<S extends Schema> = {
-  [K in keyof S]: S[K] extends { required: true }
-    ? S[K] extends { default: unknown }
-      ? never
-      : K
-    : never;
+  [K in keyof S]: S[K] extends { required: true } ? (S[K] extends { default: unknown } ? never : K) : never;
 }[keyof S];
 
 export type CreateInput<S extends Schema> = { id?: string } & {
   [K in RequiredKeys<S>]: ValueOf<S[K]>;
 } & { [K in Exclude<keyof S, RequiredKeys<S>>]?: ValueOf<S[K]> };
 
-export type UpdateInput<S extends Schema> = {
-  -readonly [K in keyof S]?: ValueOf<S[K]>;
-};
+export type UpdateInput<S extends Schema> = { -readonly [K in keyof S]?: ValueOf<S[K]> };
 
-export type InferRow<M> = M extends {
-  readonly __schema?: infer S extends Schema;
-}
-  ? Row<S>
-  : never;
+export type InferRow<M> = M extends { readonly __schema?: infer S extends Schema } ? Row<S> : never;
 
 export type Operator<T> = {
   eq?: T;
@@ -110,7 +100,16 @@ export interface ModelOptions {
   create?: boolean;
   /** Add schema columns that are missing from the header. Default true. */
   migrate?: boolean;
-  /** Assign ids to rows added by hand in Sheets (they have no id). Default true. */
+  /**
+   * Name of the column that holds the row id (the `id` property). Default "id".
+   * Point it at a column you already have, for example "TransId", and no extra id column is added.
+   * Do not also declare that column as a field in the schema.
+   */
+  idColumn?: string;
+  /**
+   * Assign an id to rows added by hand in Sheets (they have none), so they can be found by id.
+   * Default true with the default "id" column, false when you set `idColumn` (your own ids are not overwritten).
+   */
   healIds?: boolean;
   /** In-memory read cache. Writes always read fresh and invalidate it. */
   cache?: { ttlMs: number } | false;

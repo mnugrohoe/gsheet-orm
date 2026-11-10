@@ -257,3 +257,130 @@ describe("GSheetDB", () => {
     process.env = saved;
   });
 });
+
+describe("grids grow by themselves", () => {
+  const gridError = () =>
+    new GSheetError("API", "Google Sheets API error (400): Range ('Items Tab'!A7:D7) exceeds grid limits. Max rows: 6, max columns: 4");
+
+  const tableApi = (grid: { rows: number; cols: number }) => {
+    const a = new FakeApi([
+      {
+        sheetId: 7,
+        title: "Items Tab",
+        rowCount: grid.rows,
+        columnCount: grid.cols,
+        tables: [tableMeta({ gridRows: grid.rows, gridColumns: grid.cols })],
+      },
+    ]);
+    a.values["'Items Tab'!B3:D3"] = [["id", "name", "stock"]];
+    return a;
+  };
+  const dimension = (a: FakeApi) =>
+    a.of("batchUpdate").flatMap((c) => c.args[0] as any[]).filter((r) => r.appendDimension).map((r) => r.appendDimension);
+
+  it("table: adds rows before appending when the table touches the bottom of the sheet", async () => {
+    const a = tableApi({ rows: 6, cols: 4 }); // table ends at row 6, the grid is 6 rows
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init(cols, { migrate: true });
+    await d.append([["a", "A", 1], ["b", "B", 2]]);
+    const calls = a.of("batchUpdate").map((c) => (c.args[0] as any[])[0]);
+    expect(dimension(a)).toEqual([{ sheetId: 7, dimension: "ROWS", length: 2 + 100 + 0 }]);
+    expect(calls.findIndex((r) => r.appendDimension)).toBeLessThan(calls.findIndex((r) => r.appendCells));
+  });
+
+  it("table: does not grow when there is room", async () => {
+    const a = tableApi({ rows: 1000, cols: 26 });
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init(cols, { migrate: true });
+    await d.append([["a", "A", 1]]);
+    expect(dimension(a)).toEqual([]);
+  });
+
+  it("table: grows and retries once when Google reports the grid limit", async () => {
+    const a = tableApi({ rows: 1000, cols: 26 });
+    let first = true;
+    const orig = a.batchUpdate.bind(a);
+    a.batchUpdate = async (reqs: unknown[]) => {
+      if (first && (reqs[0] as any).appendCells) {
+        first = false;
+        throw gridError();
+      }
+      return orig(reqs);
+    };
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init(cols, { migrate: true });
+    await d.append([["a", "A", 1]]);
+    expect(dimension(a)).toHaveLength(1);
+    expect(a.of("batchUpdate").filter((c) => (c.args[0] as any[])[0].appendCells)).toHaveLength(1); // the retry (the failed one threw before recording)
+  });
+
+  it("table: other errors are not swallowed", async () => {
+    const a = tableApi({ rows: 1000, cols: 26 });
+    const orig = a.batchUpdate.bind(a);
+    a.batchUpdate = async (reqs: unknown[]) => {
+      if ((reqs[0] as any).appendCells) throw new GSheetError("API", "Google Sheets API error (403): no permission");
+      return orig(reqs);
+    };
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init(cols, { migrate: true });
+    await expect(d.append([["a", "A", 1]])).rejects.toThrow(/no permission/);
+  });
+
+  it("table: adds columns before extending the table to the right", async () => {
+    const a = tableApi({ rows: 1000, cols: 4 }); // table already uses all 4 columns
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init([...cols, { name: "extra", type: "string" }], { migrate: true });
+    expect(dimension(a)).toEqual([{ sheetId: 7, dimension: "COLUMNS", length: 1 }]);
+    const order = a.calls.map((c) => c.op === "batchUpdate" ? ((c.args[0] as any[])[0].appendDimension ? "grow" : "updateTable") : c.op);
+    expect(order.indexOf("grow")).toBeLessThan(order.indexOf("updateValues"));
+  });
+
+  it("table: makes room on an existing empty tab that is narrower than the schema", async () => {
+    const a = new FakeApi([{ sheetId: 1, title: "items", rowCount: 1, columnCount: 2, tables: [] }]);
+    a.values["'items'!1:1"] = [];
+    const orig = a.batchUpdate.bind(a);
+    a.batchUpdate = async (reqs: unknown[]) => {
+      const res = await orig(reqs);
+      if ((reqs[0] as any).addTable) {
+        a.sheets = [{ sheetId: 1, title: "items", tables: [tableMeta({ sheetTitle: "items", range: { sheetId: 1, startRowIndex: 0, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 3 } })] }];
+        a.values["'items'!A1:C1"] = [["id", "name", "stock"]];
+      }
+      return res;
+    };
+    const d = new TableDriver(a, { tableName: "items", tabName: "items", existing: false });
+    await d.init(cols, { migrate: true });
+    expect(dimension(a)).toEqual([
+      { sheetId: 1, dimension: "COLUMNS", length: 1 },
+      { sheetId: 1, dimension: "ROWS", length: 1 },
+    ]);
+  });
+
+  it("sheet: adds columns when the header is wider than the grid", async () => {
+    const a = new FakeApi([{ sheetId: 3, title: "items", rowCount: 1000, columnCount: 2, tables: [] }]);
+    a.values["'items'!1:1"] = [["id", "name"]];
+    const d = new SheetDriver(a, { tabName: "items", existing: true, create: true });
+    await d.init(cols, { migrate: true });
+    expect(dimension(a)).toEqual([{ sheetId: 3, dimension: "COLUMNS", length: 1 }]);
+    const order = a.calls.map((c) => c.op === "batchUpdate" ? "grow" : c.op);
+    expect(order.indexOf("grow")).toBeLessThan(order.indexOf("updateValues"));
+  });
+
+  it("sheet: grows rows and retries once when the grid limit is hit", async () => {
+    const a = new FakeApi([{ sheetId: 3, title: "items", rowCount: 6, columnCount: 26, tables: [] }]);
+    a.values["'items'!1:1"] = [["id", "name", "stock"]];
+    const orig = a.appendValues.bind(a);
+    let first = true;
+    a.appendValues = async (range: string, values: unknown[][]) => {
+      if (first) {
+        first = false;
+        throw gridError();
+      }
+      return orig(range, values);
+    };
+    const d = new SheetDriver(a, { tabName: "items", existing: true, create: true });
+    await d.init(cols, { migrate: true });
+    await d.append([["a", "A", 1]]);
+    expect(dimension(a)).toEqual([{ sheetId: 3, dimension: "ROWS", length: 1 + 100 }]);
+    expect(a.of("appendValues")).toHaveLength(1);
+  });
+});

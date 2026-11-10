@@ -38,6 +38,13 @@ interface FieldDef {
     default?: unknown;
     /** string fields only. Validated on write; becomes a dropdown column in Table mode. */
     enum?: readonly string[];
+    /**
+     * date fields only. Filled in by the library:
+     * "create": set to now when the row is created.
+     * "update": set to now when the row is created and on every update.
+     * Nothing is added to your sheet unless you declare such a field.
+     */
+    auto?: "create" | "update";
 }
 type Schema = Record<string, FieldType | FieldDef>;
 type TypeName<F> = F extends FieldType ? F : F extends {
@@ -49,11 +56,11 @@ type EnumOf<F> = F extends {
 type Base<T> = T extends "string" ? string : T extends "number" ? number : T extends "boolean" ? boolean : T extends "date" ? Date : unknown;
 type ValueOf<F> = ([EnumOf<F>] extends [never] ? Base<TypeName<F>> : EnumOf<F>) | (F extends {
     required: true;
+} ? never : F extends {
+    auto: "create" | "update";
 } ? never : null);
 type SystemFields = {
     id: string;
-    createdAt: Date;
-    updatedAt: Date;
 };
 type Row<S extends Schema> = SystemFields & {
     -readonly [K in keyof S]: ValueOf<S[K]>;
@@ -61,9 +68,9 @@ type Row<S extends Schema> = SystemFields & {
 type RequiredKeys<S extends Schema> = {
     [K in keyof S]: S[K] extends {
         required: true;
-    } ? S[K] extends {
+    } ? (S[K] extends {
         default: unknown;
-    } ? never : K : never;
+    } ? never : K) : never;
 }[keyof S];
 type CreateInput<S extends Schema> = {
     id?: string;
@@ -125,7 +132,16 @@ interface ModelOptions {
     create?: boolean;
     /** Add schema columns that are missing from the header. Default true. */
     migrate?: boolean;
-    /** Assign ids to rows added by hand in Sheets (they have no id). Default true. */
+    /**
+     * Name of the column that holds the row id (the `id` property). Default "id".
+     * Point it at a column you already have, for example "TransId", and no extra id column is added.
+     * Do not also declare that column as a field in the schema.
+     */
+    idColumn?: string;
+    /**
+     * Assign an id to rows added by hand in Sheets (they have none), so they can be found by id.
+     * Default true with the default "id" column, false when you set `idColumn` (your own ids are not overwritten).
+     */
     healIds?: boolean;
     /** In-memory read cache. Writes always read fresh and invalidate it. */
     cache?: {
@@ -135,4 +151,4 @@ interface ModelOptions {
     driver?: Driver;
 }
 
-export type { CreateInput as C, Driver as D, FindOptions as F, InferRow as I, ModelOptions as M, OrderBy as O, Row as R, Schema as S, UpdateInput as U, Where as W, SystemFields as a, DateFormat as b, ColumnSpec as c, RawRow as d, Cell as e, FieldDef as f, FieldType as g, Operator as h };
+export type { CreateInput as C, Driver as D, FindOptions as F, InferRow as I, ModelOptions as M, OrderBy as O, Row as R, Schema as S, UpdateInput as U, Where as W, DateFormat as a, ColumnSpec as b, RawRow as c, Cell as d, FieldDef as e, FieldType as f, Operator as g, SystemFields as h };

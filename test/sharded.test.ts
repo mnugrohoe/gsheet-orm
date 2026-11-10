@@ -18,6 +18,8 @@ const orderSchema = {
   customerId: "string",
   date: { type: "date", required: true },
   total: { type: "number", default: 0 },
+  createdAt: { type: "date", auto: "create" },
+  updatedAt: { type: "date", auto: "update" },
 } as const;
 
 let drivers: Record<"a" | "b" | "c", SpyDriver>;
@@ -354,7 +356,7 @@ describe("join", () => {
 
 describe("Model.importMany", () => {
   it("keeps ids and timestamps", async () => {
-    const M = db.model("m", { v: "number" }, { driver: new MemoryDriver() });
+    const M = db.model("m", { v: "number", createdAt: { type: "date", auto: "create" }, updatedAt: { type: "date", auto: "update" } }, { driver: new MemoryDriver() });
     const created = new Date("2020-01-01T00:00:00Z");
     const [row] = await M.importMany([{ id: "keep", v: 1, createdAt: created, updatedAt: created }]);
     expect(row!.id).toBe("keep");

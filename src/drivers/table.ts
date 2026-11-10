@@ -1,6 +1,7 @@
 import { colLetter, quoteSheet } from "../a1.js";
 import type { SheetsApiLike, TableMeta } from "../client.js";
 import { GSheetError } from "../errors.js";
+import { ROW_BUFFER, addColumnsRequest, addRowsRequest, isGridError } from "./grow.js";
 import type { Cell, ColumnSpec, DateFormat, Driver, RawRow } from "./driver.js";
 
 const COLUMN_TYPE = {
@@ -58,10 +59,7 @@ export class TableDriver implements Driver {
     private readonly cfg: TableDriverConfig,
   ) {}
 
-  async init(
-    columns: ColumnSpec[],
-    { migrate }: { migrate: boolean },
-  ): Promise<string[]> {
+  async init(columns: ColumnSpec[], { migrate }: { migrate: boolean }): Promise<string[]> {
     if (!this.cfg.existing) await this.createTable(columns);
 
     let meta = await this.fetchMeta();
@@ -90,6 +88,12 @@ export class TableDriver implements Driver {
 
     if (tab) {
       sheetId = tab.sheetId;
+      const grow = [];
+      if (tab.columnCount !== undefined && columns.length > tab.columnCount) {
+        grow.push(addColumnsRequest(sheetId, columns.length - tab.columnCount));
+      }
+      if (tab.rowCount !== undefined && tab.rowCount < 2) grow.push(addRowsRequest(sheetId, 2 - tab.rowCount));
+      if (grow.length) await this.api.batchUpdate(grow);
       const first = await this.api.getValues(`${q}!1:1`);
       if (first[0]?.some((c) => c !== "" && c != null)) {
         throw new GSheetError(
@@ -135,11 +139,7 @@ export class TableDriver implements Driver {
   private async fetchMeta(): Promise<TableMeta> {
     const sheets = await this.api.listSheets();
     for (const s of sheets) {
-      const t = s.tables.find((t) =>
-        this.tableId
-          ? t.tableId === this.tableId
-          : t.name === this.cfg.tableName,
-      );
+      const t = s.tables.find((t) => (this.tableId ? t.tableId === this.tableId : t.name === this.cfg.tableName));
       if (t) {
         this.tableId = t.tableId;
         this.meta = t;
@@ -164,13 +164,14 @@ export class TableDriver implements Driver {
   }
 
   /** Best effort: extends the table range to the right and registers the new columns. */
-  private async addColumns(
-    meta: TableMeta,
-    currentWidth: number,
-    missing: ColumnSpec[],
-  ) {
+  private async addColumns(meta: TableMeta, currentWidth: number, missing: ColumnSpec[]) {
     const r = meta.range;
     const q = quoteSheet(meta.sheetTitle);
+    // the table grows to the right: make sure the sheet has the columns for it
+    const needCols = r.endColumnIndex + missing.length;
+    if (meta.gridColumns !== undefined && needCols > meta.gridColumns) {
+      await this.api.batchUpdate([addColumnsRequest(r.sheetId, needCols - meta.gridColumns)]);
+    }
     await this.api.updateValues(
       `${q}!${colLetter(r.endColumnIndex + 1)}${r.startRowIndex + 1}`,
       [missing.map((m) => m.name)],
@@ -213,19 +214,33 @@ export class TableDriver implements Driver {
     if (!rows.length) return;
     const meta = this.meta ?? (await this.fetchMeta());
     const width = this.width(meta);
-    await this.api.batchUpdate([
+    const sheetId = meta.range.sheetId;
+
+    // the table grows downwards: make sure the sheet has the rows for it
+    const needRows = meta.range.endRowIndex + rows.length;
+    if (meta.gridRows !== undefined && needRows > meta.gridRows) {
+      await this.api.batchUpdate([addRowsRequest(sheetId, needRows - meta.gridRows + ROW_BUFFER)]);
+    }
+
+    const request = [
       {
         appendCells: {
           tableId: meta.tableId,
           rows: rows.map((r) => ({
-            values: Array.from({ length: width }, (_, i) =>
-              cellData(r[i] ?? null),
-            ),
+            values: Array.from({ length: width }, (_, i) => cellData(r[i] ?? null)),
           })),
           fields: "userEnteredValue",
         },
       },
-    ]);
+    ];
+    try {
+      await this.api.batchUpdate(request);
+    } catch (err) {
+      if (!isGridError(err)) throw err;
+      // size unknown or changed by someone else: grow once and retry
+      await this.api.batchUpdate([addRowsRequest(sheetId, rows.length + ROW_BUFFER)]);
+      await this.api.batchUpdate(request);
+    }
   }
 
   async update(rows: { rowNum: number; values: Cell[] }[]): Promise<void> {

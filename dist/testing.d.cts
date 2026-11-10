@@ -1,4 +1,4 @@
-import { D as Driver, b as DateFormat, c as ColumnSpec, d as RawRow, e as Cell } from './types-Dn6p4KTB.cjs';
+import { D as Driver, a as DateFormat, b as ColumnSpec, c as RawRow, d as Cell } from './types-BfjImFSN.cjs';
 
 /**
  * In-memory driver for unit-testing code that uses gsheet-orm without touching Google.

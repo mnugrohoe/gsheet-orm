@@ -1,8 +1,5 @@
 // src/client.ts
-import {
-  sheets as createSheets,
-  auth as googleAuth
-} from "@googleapis/sheets";
+import { sheets as createSheets, auth as googleAuth } from "@googleapis/sheets";
 
 // src/errors.ts
 var GSheetError = class extends Error {
@@ -73,20 +70,14 @@ var SheetsApi = class {
       } catch (err) {
         if (err instanceof GSheetError) throw err;
         const status = statusOf(err);
-        const network = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"].includes(
-          err?.code
-        );
+        const network = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"].includes(err?.code);
         if (attempt < this.retries && (status && RETRYABLE.has(status) || network)) {
           const delay = this.baseDelayMs * 2 ** attempt * (0.75 + Math.random() * 0.5);
           await new Promise((res) => setTimeout(res, delay));
           continue;
         }
         const detail = err?.response?.data?.error?.message ?? err?.message ?? String(err);
-        throw new GSheetError(
-          "API",
-          `Google Sheets API error${status ? ` (${status})` : ""}: ${detail}`,
-          { cause: err }
-        );
+        throw new GSheetError("API", `Google Sheets API error${status ? ` (${status})` : ""}: ${detail}`, { cause: err });
       }
     }
   }
@@ -94,21 +85,25 @@ var SheetsApi = class {
     const res = await this.call(
       () => this.api.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
-        fields: "sheets(properties(sheetId,title),tables)"
+        fields: "sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),tables)"
       })
     );
     return (res.data.sheets ?? []).map((s) => {
       const sheetId = s.properties?.sheetId ?? 0;
       const title = s.properties?.title ?? "";
+      const rowCount = s.properties?.gridProperties?.rowCount ?? void 0;
+      const columnCount = s.properties?.gridProperties?.columnCount ?? void 0;
       const tables = (s.tables ?? []).map((t) => ({
         tableId: t.tableId,
         name: t.name,
         sheetTitle: title,
         range: toGridRange(t.range, sheetId),
         columnProperties: t.columnProperties ?? [],
-        hasFooter: Boolean(t.rowsProperties?.footerColorStyle)
+        hasFooter: Boolean(t.rowsProperties?.footerColorStyle),
+        gridRows: rowCount,
+        gridColumns: columnCount
       }));
-      return { sheetId, title, tables };
+      return { sheetId, title, tables, rowCount, columnCount };
     });
   }
   async batchUpdate(requests) {
@@ -223,6 +218,18 @@ function colLetter(n) {
 }
 var quoteSheet = (title) => `'${title.replace(/'/g, "''")}'`;
 
+// src/drivers/grow.ts
+var ROW_BUFFER = 100;
+var addRowsRequest = (sheetId, length) => ({
+  appendDimension: { sheetId, dimension: "ROWS", length }
+});
+var addColumnsRequest = (sheetId, length) => ({
+  appendDimension: { sheetId, dimension: "COLUMNS", length }
+});
+var isGridError = (err) => /exceeds grid limits|out of (the )?grid|beyond (the )?grid|grid limits/i.test(
+  err instanceof Error ? err.message : String(err)
+);
+
 // src/drivers/sheet.ts
 var SheetDriver = class {
   constructor(api, cfg) {
@@ -242,8 +249,7 @@ var SheetDriver = class {
     const sheets = await this.api.listSheets();
     let tab = sheets.find((s) => s.title === this.cfg.tabName);
     if (!tab) {
-      if (!this.cfg.create)
-        throw new GSheetError("SCHEMA", `Tab "${this.cfg.tabName}" not found`);
+      if (!this.cfg.create) throw new GSheetError("SCHEMA", `Tab "${this.cfg.tabName}" not found`);
       const res = await this.api.batchUpdate([
         {
           addSheet: {
@@ -255,7 +261,7 @@ var SheetDriver = class {
         }
       ]);
       const sheetId = res.replies?.[0]?.addSheet?.properties?.sheetId;
-      tab = { sheetId, title: this.cfg.tabName, tables: [] };
+      tab = { sheetId, title: this.cfg.tabName, tables: [], columnCount: Math.max(26, columns.length) };
     }
     this.sheetId = tab.sheetId;
     const first = await this.api.getValues(`${this.q}!1:1`);
@@ -269,23 +275,28 @@ var SheetDriver = class {
     }
     const header = [...existing, ...missing.map((m) => m.name)];
     if (missing.length) {
+      if (tab.columnCount !== void 0 && header.length > tab.columnCount) {
+        await this.api.batchUpdate([addColumnsRequest(tab.sheetId, header.length - tab.columnCount)]);
+      }
       await this.api.updateValues(`${this.q}!A1`, [header]);
     }
     this.width = header.length;
     return header;
   }
   async read() {
-    const values = await this.api.getValues(
-      `${this.q}!A2:${colLetter(this.width)}`
-    );
+    const values = await this.api.getValues(`${this.q}!A2:${colLetter(this.width)}`);
     return values.map((v, i) => ({ rowNum: i + 2, values: v }));
   }
   async append(rows) {
     if (!rows.length) return;
-    await this.api.appendValues(
-      `${this.q}!A1`,
-      rows.map((r) => Array.from({ length: this.width }, (_, i) => r[i] ?? ""))
-    );
+    const values = rows.map((r) => Array.from({ length: this.width }, (_, i) => r[i] ?? ""));
+    try {
+      await this.api.appendValues(`${this.q}!A1`, values);
+    } catch (err) {
+      if (!isGridError(err) || this.sheetId === void 0) throw err;
+      await this.api.batchUpdate([addRowsRequest(this.sheetId, rows.length + ROW_BUFFER)]);
+      await this.api.appendValues(`${this.q}!A1`, values);
+    }
   }
   async update(rows) {
     if (!rows.length) return;
@@ -301,12 +312,7 @@ var SheetDriver = class {
     if (!rowNums.length) return;
     const requests = [...rowNums].sort((a, b) => b - a).map((rowNum) => ({
       deleteDimension: {
-        range: {
-          sheetId: this.sheetId,
-          dimension: "ROWS",
-          startIndex: rowNum - 1,
-          endIndex: rowNum
-        }
+        range: { sheetId: this.sheetId, dimension: "ROWS", startIndex: rowNum - 1, endIndex: rowNum }
       }
     }));
     await this.api.batchUpdate(requests);
@@ -373,6 +379,12 @@ var TableDriver = class {
     let sheetId;
     if (tab) {
       sheetId = tab.sheetId;
+      const grow = [];
+      if (tab.columnCount !== void 0 && columns.length > tab.columnCount) {
+        grow.push(addColumnsRequest(sheetId, columns.length - tab.columnCount));
+      }
+      if (tab.rowCount !== void 0 && tab.rowCount < 2) grow.push(addRowsRequest(sheetId, 2 - tab.rowCount));
+      if (grow.length) await this.api.batchUpdate(grow);
       const first = await this.api.getValues(`${q}!1:1`);
       if (first[0]?.some((c) => c !== "" && c != null)) {
         throw new GSheetError(
@@ -416,9 +428,7 @@ var TableDriver = class {
   async fetchMeta() {
     const sheets = await this.api.listSheets();
     for (const s of sheets) {
-      const t = s.tables.find(
-        (t2) => this.tableId ? t2.tableId === this.tableId : t2.name === this.cfg.tableName
-      );
+      const t = s.tables.find((t2) => this.tableId ? t2.tableId === this.tableId : t2.name === this.cfg.tableName);
       if (t) {
         this.tableId = t.tableId;
         this.meta = t;
@@ -442,6 +452,10 @@ var TableDriver = class {
   async addColumns(meta, currentWidth, missing) {
     const r = meta.range;
     const q = quoteSheet(meta.sheetTitle);
+    const needCols = r.endColumnIndex + missing.length;
+    if (meta.gridColumns !== void 0 && needCols > meta.gridColumns) {
+      await this.api.batchUpdate([addColumnsRequest(r.sheetId, needCols - meta.gridColumns)]);
+    }
     await this.api.updateValues(
       `${q}!${colLetter(r.endColumnIndex + 1)}${r.startRowIndex + 1}`,
       [missing.map((m) => m.name)]
@@ -481,20 +495,29 @@ var TableDriver = class {
     if (!rows.length) return;
     const meta = this.meta ?? await this.fetchMeta();
     const width = this.width(meta);
-    await this.api.batchUpdate([
+    const sheetId = meta.range.sheetId;
+    const needRows = meta.range.endRowIndex + rows.length;
+    if (meta.gridRows !== void 0 && needRows > meta.gridRows) {
+      await this.api.batchUpdate([addRowsRequest(sheetId, needRows - meta.gridRows + ROW_BUFFER)]);
+    }
+    const request = [
       {
         appendCells: {
           tableId: meta.tableId,
           rows: rows.map((r) => ({
-            values: Array.from(
-              { length: width },
-              (_, i) => cellData(r[i] ?? null)
-            )
+            values: Array.from({ length: width }, (_, i) => cellData(r[i] ?? null))
           })),
           fields: "userEnteredValue"
         }
       }
-    ]);
+    ];
+    try {
+      await this.api.batchUpdate(request);
+    } catch (err) {
+      if (!isGridError(err)) throw err;
+      await this.api.batchUpdate([addRowsRequest(sheetId, rows.length + ROW_BUFFER)]);
+      await this.api.batchUpdate(request);
+    }
   }
   async update(rows) {
     if (!rows.length) return;
@@ -682,31 +705,34 @@ async function join(left, right, opts) {
 }
 
 // src/model.ts
-var RESERVED = ["id", "createdAt", "updatedAt"];
+var RESERVED = ["id"];
 var Model = class {
   constructor(name, schema, opts, getApi) {
     this.name = name;
     this.opts = opts;
     this.getApi = getApi;
+    this.idColumn = opts.idColumn ?? "id";
     this.fields = {};
     for (const [key, def] of Object.entries(schema)) {
       if (RESERVED.includes(key)) {
+        throw new GSheetError("SCHEMA", `[${name}] "${key}" is reserved: it is the row id`);
+      }
+      if (key === this.idColumn) {
         throw new GSheetError(
           "SCHEMA",
-          `[${name}] "${key}" is reserved and added automatically`
+          `[${name}] "${key}" is the idColumn, so it is the row's \`id\` property. Remove it from the schema.`
         );
       }
-      this.fields[key] = typeof def === "string" ? { type: def } : def;
+      const f = typeof def === "string" ? { type: def } : def;
+      if (f.auto && f.type !== "date") {
+        throw new GSheetError("SCHEMA", `[${name}] "${key}": auto needs a date field`);
+      }
+      this.fields[key] = f;
     }
+    this.autoFields = Object.keys(this.fields).filter((k) => this.fields[k].auto);
     this.columns = [
-      { name: "id", type: "string" },
-      ...Object.entries(this.fields).map(([n, f]) => ({
-        name: n,
-        type: f.type,
-        enum: f.enum
-      })),
-      { name: "createdAt", type: "date" },
-      { name: "updatedAt", type: "date" }
+      { name: this.idColumn, type: "string" },
+      ...Object.entries(this.fields).map(([n, f]) => ({ name: n, type: f.type, enum: f.enum }))
     ];
     this.managed = new Set(this.columns.map((c) => c.name));
   }
@@ -714,6 +740,8 @@ var Model = class {
   opts;
   getApi;
   fields;
+  idColumn;
+  autoFields;
   managed;
   columns;
   driver;
@@ -742,53 +770,48 @@ var Model = class {
       sheet: o.sheet,
       create: o.create ?? true
     });
-    this.header = await driver.init(this.columns, {
-      migrate: o.migrate ?? true
-    });
+    this.header = await driver.init(this.columns, { migrate: o.migrate ?? true });
     this.driver = driver;
   }
   /* ------------------------------ mapping ------------------------------ */
+  /** Property name of a column: the id column is exposed as `id`. */
+  prop(col) {
+    return col === this.idColumn ? "id" : col;
+  }
   typeOf(col) {
     return this.columns.find((c) => c.name === col)?.type ?? "string";
   }
   toRow(raw) {
     const row = {};
     this.header.forEach((col, i) => {
-      if (this.managed.has(col))
-        row[col] = deserialize(raw[i], this.typeOf(col));
+      if (this.managed.has(col)) row[this.prop(col)] = deserialize(raw[i], this.typeOf(col));
     });
     return row;
   }
   toCells(rec, base) {
     const driver = this.driver;
     return this.header.map(
-      (col, i) => this.managed.has(col) ? serialize(rec[col], this.typeOf(col), driver.dateFormat) : base?.[i] ?? null
+      (col, i) => this.managed.has(col) ? serialize(rec[this.prop(col)], this.typeOf(col), driver.dateFormat) : base?.[i] ?? null
     );
   }
   async load(fresh = false) {
     await this.sync();
     const ttl = this.opts.cache ? this.opts.cache.ttlMs : 0;
-    if (!fresh && ttl && this.cache && Date.now() - this.cache.at < ttl)
-      return this.cache.rows;
-    const rows = (await this.driver.read()).filter((r) => r.values.some((v) => v !== "" && v != null && v !== false)).map((r) => ({
-      rowNum: r.rowNum,
-      raw: r.values,
-      row: this.toRow(r.values)
-    }));
-    if (this.opts.healIds ?? true) {
+    if (!fresh && ttl && this.cache && Date.now() - this.cache.at < ttl) return this.cache.rows;
+    const rows = (await this.driver.read()).filter((r) => r.values.some((v) => v !== "" && v != null && v !== false)).map((r) => ({ rowNum: r.rowNum, raw: r.values, row: this.toRow(r.values) }));
+    if (this.opts.healIds ?? this.idColumn === "id") {
       const orphans = rows.filter((r) => !r.row.id);
       if (orphans.length) {
         const now = /* @__PURE__ */ new Date();
         for (const o of orphans) {
           o.row.id = randomUUID();
-          o.row.createdAt ||= now;
-          o.row.updatedAt ||= now;
+          for (const k of this.autoFields) {
+            const r = o.row;
+            if (r[k] == null) r[k] = now;
+          }
         }
         await this.driver.update(
-          orphans.map((o) => ({
-            rowNum: o.rowNum,
-            values: this.toCells(o.row, o.raw)
-          }))
+          orphans.map((o) => ({ rowNum: o.rowNum, values: this.toCells(o.row, o.raw) }))
         );
       }
     }
@@ -805,12 +828,10 @@ var Model = class {
     switch (def.type) {
       case "string":
         if (typeof v !== "string") throw bad("a string");
-        if (def.enum && !def.enum.includes(v))
-          throw bad(`one of: ${def.enum.join(", ")}`);
+        if (def.enum && !def.enum.includes(v)) throw bad(`one of: ${def.enum.join(", ")}`);
         return v;
       case "number":
-        if (typeof v !== "number" || !Number.isFinite(v))
-          throw bad("a finite number");
+        if (typeof v !== "number" || !Number.isFinite(v)) throw bad("a finite number");
         return v;
       case "boolean":
         if (typeof v !== "boolean") throw bad("a boolean");
@@ -831,28 +852,18 @@ var Model = class {
   }
   requireValue(key, def, v) {
     if (def.required && (v === null || v === void 0 || v === "")) {
-      throw new GSheetError(
-        "VALIDATION",
-        `[${this.name}] "${key}" is required`
-      );
+      throw new GSheetError("VALIDATION", `[${this.name}] "${key}" is required`);
     }
   }
-  assertKnown(input, allowId, allowTimestamps = false) {
+  assertKnown(input, allowId) {
     for (const k of Object.keys(input)) {
-      const ok = k in this.fields || allowId && k === "id" || allowTimestamps && (k === "createdAt" || k === "updatedAt");
-      if (!ok) {
-        throw new GSheetError(
-          "VALIDATION",
-          `[${this.name}] unknown field "${k}"`
-        );
+      if (!(k in this.fields) && !(allowId && k === "id")) {
+        throw new GSheetError("VALIDATION", `[${this.name}] unknown field "${k}"`);
       }
     }
   }
   assertUnique(records, existing, only) {
-    const keys = only ?? [
-      "id",
-      ...Object.keys(this.fields).filter((k) => this.fields[k].unique)
-    ];
+    const keys = only ?? ["id", ...Object.keys(this.fields).filter((k) => this.fields[k].unique)];
     for (const key of keys) {
       const owners = new Map(
         existing.map((e) => [norm(e.row[key]), e.row.id])
@@ -862,10 +873,7 @@ var Model = class {
         if (v == null) continue;
         const owner = owners.get(v);
         if (owner !== void 0 && owner !== rec.id) {
-          throw new GSheetError(
-            "UNIQUE",
-            `[${this.name}] "${key}" must be unique (duplicate: ${String(v)})`
-          );
+          throw new GSheetError("UNIQUE", `[${this.name}] "${key}" must be unique (duplicate: ${String(v)})`);
         }
         owners.set(v, rec.id);
       }
@@ -893,34 +901,33 @@ var Model = class {
     return (await this.createMany([data]))[0];
   }
   async createMany(items) {
-    return this.insert(items, false);
+    return this.insert(items);
   }
   /**
-   * Inserts rows as they are, keeping their id / createdAt / updatedAt when given.
-   * Use it to move or back-fill rows (for example when splitting a table into shards).
+   * Same as `createMany`. Given ids and values (including `auto` date fields) are kept as they are,
+   * which is what you want when moving or back-filling rows, for example when splitting a table into shards.
    */
   async importMany(rows) {
-    return this.insert(rows, true);
+    return this.insert(rows);
   }
-  async insert(items, keepSystem) {
+  async insert(items) {
     if (!items.length) return [];
     await this.sync();
     const now = /* @__PURE__ */ new Date();
     const records = items.map((item) => {
       const input = item;
-      this.assertKnown(input, true, keepSystem);
+      this.assertKnown(input, true);
       const rec = {};
       for (const [key, def] of Object.entries(this.fields)) {
         let v = input[key];
-        if (v === void 0 && def.default !== void 0) {
+        if (v === void 0 && def.auto) v = now;
+        else if (v === void 0 && def.default !== void 0) {
           v = typeof def.default === "function" ? def.default() : def.default;
         }
         rec[key] = this.normalize(key, def, v);
         this.requireValue(key, def, rec[key]);
       }
       rec.id = input.id ?? randomUUID();
-      rec.createdAt = keepSystem && input.createdAt ? new Date(input.createdAt) : now;
-      rec.updatedAt = keepSystem && input.updatedAt ? new Date(input.updatedAt) : now;
       return rec;
     });
     this.assertUnique(records, await this.load(true));
@@ -935,6 +942,9 @@ var Model = class {
     const all = await this.load(true);
     const targets = all.filter((l) => matches(l.row, where));
     if (!targets.length) return [];
+    return this.applyUpdate(all, targets, patch);
+  }
+  async applyUpdate(all, targets, patch) {
     const clean = {};
     for (const [key, v] of Object.entries(patch)) {
       if (v === void 0) continue;
@@ -943,63 +953,56 @@ var Model = class {
       this.requireValue(key, def, clean[key]);
     }
     const now = /* @__PURE__ */ new Date();
-    const next = targets.map((t) => ({
-      rowNum: t.rowNum,
-      raw: t.raw,
-      rec: { ...t.row, ...clean, updatedAt: now }
-    }));
-    const touchedUnique = Object.keys(clean).filter(
-      (k) => this.fields[k].unique
-    );
-    if (touchedUnique.length)
-      this.assertUnique(
-        next.map((n) => n.rec),
-        all,
-        touchedUnique
-      );
-    await this.driver.update(
-      next.map((n) => ({
-        rowNum: n.rowNum,
-        values: this.toCells(n.rec, n.raw)
-      }))
-    );
+    const next = targets.map((t) => {
+      const rec = { ...t.row, ...clean };
+      for (const k of this.autoFields) {
+        if (this.fields[k].auto === "update" && !(k in clean)) rec[k] = now;
+      }
+      return { rowNum: t.rowNum, raw: t.raw, rec };
+    });
+    const touchedUnique = Object.keys(clean).filter((k) => this.fields[k].unique);
+    if (touchedUnique.length) this.assertUnique(next.map((n) => n.rec), all, touchedUnique);
+    await this.driver.update(next.map((n) => ({ rowNum: n.rowNum, values: this.toCells(n.rec, n.raw) })));
     this.invalidate();
     return next.map((n) => n.rec);
   }
+  requireId(id) {
+    if (id === null || id === void 0 || id === "") {
+      throw new GSheetError("VALIDATION", `[${this.name}] an id is required`);
+    }
+  }
   async updateById(id, data) {
+    this.requireId(id);
     return (await this.update({ id }, data))[0] ?? null;
   }
   /** Updates the first match, or creates a new row when nothing matches. */
   async upsert(where, data) {
-    const found = (await this.load(true)).find((l) => matches(l.row, where));
+    const all = await this.load(true);
+    const found = all.find((l) => matches(l.row, where));
     if (found) {
       const { id: _ignored, ...rest } = data;
-      return await this.updateById(found.row.id, rest);
+      this.assertKnown(rest, false);
+      return (await this.applyUpdate(all, [found], rest))[0];
     }
     return this.create(data);
   }
   /* ------------------------------ delete ------------------------------ */
   /** Deletes all matching rows and returns how many were removed. */
   async delete(where) {
-    const targets = (await this.load(true)).filter(
-      (l) => matches(l.row, where)
-    );
+    const targets = (await this.load(true)).filter((l) => matches(l.row, where));
     if (!targets.length) return 0;
     await this.driver.remove(targets.map((t) => t.rowNum));
     this.invalidate();
     return targets.length;
   }
   async deleteById(id) {
+    this.requireId(id);
     return await this.delete({ id }) > 0;
   }
   /* ------------------------------ join ------------------------------ */
   /** Joins this model with another one (also across spreadsheets). See `join`. */
   join(other, opts) {
-    return join(
-      this,
-      other,
-      opts
-    );
+    return join(this, other, opts);
   }
 };
 
@@ -1034,6 +1037,7 @@ var ShardedModel = class {
     this.field = partitionBy;
     this.fieldType = type;
     this.limit = concurrency ?? 4;
+    this.autoUpdate = Object.entries(schema).filter(([, d]) => typeof d !== "string" && d.auto === "update").map(([k]) => k);
     const bound = (v, what) => {
       if (v === void 0) return void 0;
       const k = toKey(v, type);
@@ -1074,6 +1078,7 @@ var ShardedModel = class {
   field;
   fieldType;
   limit;
+  autoUpdate;
   /* ------------------------------ routing ------------------------------ */
   key(v) {
     return toKey(v, this.fieldType);
@@ -1262,16 +1267,16 @@ var ShardedModel = class {
    * spreadsheet fails after another succeeded, the earlier inserts stay.
    */
   async createMany(items) {
-    return this.insertRouted(items, false);
+    return this.insertRouted(items);
   }
   /**
-   * Like `createMany`, but keeps `id`, `createdAt` and `updatedAt` when given.
+   * Same as `createMany`: given ids and values (including `auto` date fields) are kept as they are.
    * Handy to split an existing table over the shards.
    */
   async importMany(rows) {
-    return this.insertRouted(rows, true);
+    return this.insertRouted(rows);
   }
-  async insertRouted(items, keepSystem) {
+  async insertRouted(items) {
     const groups = /* @__PURE__ */ new Map();
     items.forEach((item, index) => {
       const shard = this.shardFor(item[this.field]);
@@ -1280,8 +1285,7 @@ var ShardedModel = class {
     });
     const out = new Array(items.length);
     await mapLimit([...groups], this.limit, async ([shard, list]) => {
-      const batch = list.map((l) => l.item);
-      const rows = keepSystem ? await shard.model.importMany(batch) : await shard.model.createMany(batch);
+      const rows = await shard.model.createMany(list.map((l) => l.item));
       rows.forEach((row, i) => out[list[i].index] = row);
     });
     return out;
@@ -1319,7 +1323,11 @@ var ShardedModel = class {
       const ids = new Set(rows.map((r) => r.id));
       const now = /* @__PURE__ */ new Date();
       const moved = await target.model.importMany(
-        rows.map((r) => ({ ...r, ...patch, updatedAt: now }))
+        rows.map((r) => {
+          const next = { ...r, ...patch };
+          for (const k of this.autoUpdate) if (!(k in patch)) next[k] = now;
+          return next;
+        })
       );
       await shard.model.delete(((row) => ids.has(row.id)));
       results.push(...moved);
@@ -1330,6 +1338,9 @@ var ShardedModel = class {
     for (const shard of this.pick(where)) {
       const [found] = await shard.model.findMany({ where, limit: 1, fresh: true });
       if (found) {
+        if (!found.id) {
+          throw new GSheetError("VALIDATION", `[${this.name}] the matching row has no id, so it cannot be updated by upsert`);
+        }
         const { id: _ignored, ...rest } = data;
         return (await this.updateIn([shard], { id: found.id }, rest))[0];
       }
