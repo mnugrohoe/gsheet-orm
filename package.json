@@ -1,6 +1,6 @@
 {
   "name": "@mnugrohoe/gsheet-orm",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Typed ORM for Google Sheets. Tables first, plain tabs as fallback, shard one model over many spreadsheets, join across them.",
   "keywords": [
     "google-sheets",

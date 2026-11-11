@@ -366,7 +366,7 @@ var TableDriver = class {
           `Table "${this.cfg.tableName}" is missing column(s): ${missing.map((m) => m.name).join(", ")}`
         );
       }
-      await this.addColumns(meta, header.length, missing);
+      await this.addColumns(meta, missing);
       meta = await this.fetchMeta();
       header = await this.readHeader(meta);
     }
@@ -448,33 +448,44 @@ var TableDriver = class {
     if (fromCells.some(Boolean)) return fromCells;
     return [...meta.columnProperties].sort((a, b) => a.columnIndex - b.columnIndex).map((c) => String(c.columnName));
   }
-  /** Best effort: extends the table range to the right and registers the new columns. */
-  async addColumns(meta, currentWidth, missing) {
-    const r = meta.range;
-    const q = quoteSheet(meta.sheetTitle);
-    const needCols = r.endColumnIndex + missing.length;
-    if (meta.gridColumns !== void 0 && needCols > meta.gridColumns) {
-      await this.api.batchUpdate([addColumnsRequest(r.sheetId, needCols - meta.gridColumns)]);
-    }
-    await this.api.updateValues(
-      `${q}!${colLetter(r.endColumnIndex + 1)}${r.startRowIndex + 1}`,
-      [missing.map((m) => m.name)]
-    );
-    await this.api.batchUpdate([
-      {
-        updateTable: {
-          table: {
-            tableId: meta.tableId,
-            range: { ...r, endColumnIndex: r.endColumnIndex + missing.length },
-            columnProperties: [
-              ...meta.columnProperties,
-              ...missing.map((m, i) => columnProperty(m, currentWidth + i))
-            ]
-          },
-          fields: "range,columnProperties"
-        }
+  /**
+   * Extends the table to the right to make room for new columns.
+   *
+   * Only the table `range` is updated. The definitions of the existing columns (dropdowns that point
+   * at other tables, column types, ...) are not sent back, because Google rejects some of them in the
+   * form it returns them (for example `=Person[Name]`). New columns get the default column type in Sheets.
+   */
+  async addColumns(meta, missing) {
+    const names = missing.map((m) => m.name).join(", ");
+    try {
+      const r = meta.range;
+      const q = quoteSheet(meta.sheetTitle);
+      const needCols = r.endColumnIndex + missing.length;
+      if (meta.gridColumns !== void 0 && needCols > meta.gridColumns) {
+        await this.api.batchUpdate([addColumnsRequest(r.sheetId, needCols - meta.gridColumns)]);
       }
-    ]);
+      await this.api.updateValues(
+        `${q}!${colLetter(r.endColumnIndex + 1)}${r.startRowIndex + 1}`,
+        [missing.map((m) => m.name)]
+      );
+      await this.api.batchUpdate([
+        {
+          updateTable: {
+            table: {
+              tableId: meta.tableId,
+              range: { ...r, endColumnIndex: r.endColumnIndex + missing.length }
+            },
+            fields: "range"
+          }
+        }
+      ]);
+    } catch (err) {
+      throw new GSheetError(
+        "SCHEMA",
+        `Could not add column(s) ${names} to Table "${this.cfg.tableName}": ${err instanceof Error ? err.message : String(err)}. Add the column(s) in Google Sheets yourself and set migrate: false, or point idColumn at a column you already have.`,
+        { cause: err }
+      );
+    }
   }
   async read() {
     const meta = await this.fetchMeta();
@@ -1226,6 +1237,12 @@ var ShardedModel = class {
       rows.push(...take);
       if (list.length > take.length) {
         const last = take[take.length - 1];
+        if (!last.id) {
+          throw new GSheetError(
+            "VALIDATION",
+            `[${this.name}] findPage needs an id on every row it pages through. Fill the id column, or set healIds: true.`
+          );
+        }
         const cursor = encodeCursor({ o: order, ss: shard.spreadsheetId, k: this.key(last[this.field]), id: last.id });
         return { rows, cursor, hasMore: true, readShards };
       }

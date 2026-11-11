@@ -124,3 +124,24 @@ describe("idColumn: use a column you already have", () => {
     expect(d2.rows).toHaveLength(2);
   });
 });
+
+describe("paging needs ids", () => {
+  it("findPage explains itself instead of looping when the row it stops at has no id", async () => {
+    const d = new MemoryDriver({
+      header: ["TransId", "Date", "Name"],
+      rows: [
+        ["T-1", "2025-03-01T00:00:00.000Z", "a"],
+        ["", "2025-02-01T00:00:00.000Z", "no id"],
+        ["T-3", "2025-01-01T00:00:00.000Z", "c"],
+      ],
+    });
+    const sdb = new GSheetDB({ shards: [{ spreadsheetId: "a", from: 0, driver: d }] });
+    const T = sdb.model("t", { Date: { type: "date", required: true }, Name: "string" }, { partitionBy: "Date", idColumn: "TransId" });
+    // page 1 ends on a row with an id, page 2 would end on the id-less row
+    const p1 = await T.findPage({ pageSize: 1 });
+    expect(p1.rows[0]!.id).toBe("T-1");
+    await expect(T.findPage({ pageSize: 1, cursor: p1.cursor })).rejects.toMatchObject({ code: "VALIDATION" });
+    // a page that reaches the end of the data never needs a cursor, so it still works
+    expect((await T.findPage({ pageSize: 10 })).rows).toHaveLength(3);
+  });
+});

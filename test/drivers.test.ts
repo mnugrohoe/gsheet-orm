@@ -384,3 +384,71 @@ describe("grids grow by themselves", () => {
     expect(a.of("appendValues")).toHaveLength(1);
   });
 });
+
+describe("adding a column to an existing Table", () => {
+  const dropdownTable = () => {
+    const a = new FakeApi([
+      {
+        sheetId: 7,
+        title: "Items Tab",
+        rowCount: 1000,
+        columnCount: 26,
+        tables: [
+          tableMeta({
+            columnProperties: [
+              { columnIndex: 0, columnName: "id", columnType: "TEXT" },
+              {
+                // Google returns this form, but rejects it when sent back
+                columnIndex: 1,
+                columnName: "name",
+                columnType: "DROPDOWN",
+                dataValidationRule: { condition: { type: "ONE_OF_RANGE", values: [{ userEnteredValue: "=Person[Name]" }] } },
+              },
+              { columnIndex: 2, columnName: "stock", columnType: "DOUBLE" },
+            ],
+          }),
+        ],
+      },
+    ]);
+    a.values["'Items Tab'!B3:D3"] = [["id", "name", "stock"]];
+    return a;
+  };
+
+  it("only extends the range and never sends the existing column definitions back", async () => {
+    const a = dropdownTable();
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init([...cols, { name: "extra", type: "string" }], { migrate: true });
+
+    const update = a.of("batchUpdate").flatMap((c) => c.args[0] as any[]).find((r) => r.updateTable).updateTable;
+    expect(update.fields).toBe("range");
+    expect(update.table.columnProperties).toBeUndefined();
+    expect(update.table.range).toMatchObject({ sheetId: 7, startColumnIndex: 1, endColumnIndex: 5 });
+    expect(JSON.stringify(a.calls)).not.toContain("ONE_OF_RANGE");
+  });
+
+  it("explains how to fix it when Google refuses", async () => {
+    const a = dropdownTable();
+    const orig = a.batchUpdate.bind(a);
+    a.batchUpdate = async (reqs: unknown[]) => {
+      if ((reqs[0] as any).updateTable) {
+        throw new GSheetError("API", "Google Sheets API error (400): Invalid requests[0].updateTable: something");
+      }
+      return orig(reqs);
+    };
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    const err = await d.init([...cols, { name: "extra", type: "string" }], { migrate: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(GSheetError);
+    expect(err.code).toBe("SCHEMA");
+    expect(err.message).toMatch(/extra/);
+    expect(err.message).toMatch(/migrate: false/);
+    expect(err.message).toMatch(/something/); // the original reason is kept
+  });
+
+  it("does not touch the table at all when every column already exists", async () => {
+    const a = dropdownTable();
+    const d = new TableDriver(a, { tableName: "items", tabName: "Items Tab", existing: true });
+    await d.init(cols, { migrate: true });
+    expect(a.of("batchUpdate")).toHaveLength(0);
+    expect(a.of("updateValues")).toHaveLength(0);
+  });
+});

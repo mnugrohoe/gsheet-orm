@@ -207,7 +207,7 @@ Third argument of `db.model`. Everything is optional.
 | `table`         | model name | Table name to look for or create.                                                                 |
 | `sheet`         | model name | Tab name to look for or create.                                                                   |
 | `create`        | `true`   | Create the tab and table when missing. With `false` a missing one throws `SCHEMA`.                  |
-| `migrate`       | `true`   | Add schema columns missing from the header. With `false` a missing column throws `SCHEMA`.          |
+| `migrate`       | `true`   | Add schema columns missing from the header. With `false` a missing column throws `SCHEMA`. **For a Table you already use, prefer `false`** (see [Existing sheets](#existing-sheets-and-sheet-size)). |
 | `idColumn`      | `"id"`   | Header of the column that holds the row id. Set it to an existing column such as `"TransId"` to avoid an extra column. See [Row id and timestamps](#row-id-and-timestamps). |
 | `healIds`       | `true` (`false` with a custom `idColumn`) | Give an `id` to rows typed in by hand in Sheets, the next time the model reads. |
 | `cache`         | off      | `{ ttlMs: number }`. See [Caching](#caching).                                                       |
@@ -575,6 +575,7 @@ Good to know:
 - **`hasMore` can be a "maybe".** When the current spreadsheet is used up and older ones exist, the library does not read them just to find out. The next call can then return an empty page with `cursor: null`.
 - **The order is fixed** to the partition field (ties by `id`), because that is what makes it possible to read one spreadsheet at a time. For another sort order use `findMany`.
 - **Each call reads the spreadsheet again** (1 request for a plain tab, about 2 for a Table). Turn on the model `cache` and paging through one spreadsheet reads it once, however many pages.
+- **Rows need an id.** The cursor is built from the id of the last row on the page. If that row has no id (a row typed by hand when `healIds` is off), `findPage` throws `VALIDATION` instead of looping. Fill the id column, or set `healIds: true`.
 - `findPage`, `pages` and `findLatest` exist on sharded models only.
 
 ```ts
@@ -721,6 +722,19 @@ Notes:
 | Table or tab is at the bottom of the grid | 100 extra rows are added when needed (then a Table or tab keeps growing as usual) |
 | A new column does not fit on the right | The needed columns are added, then the column is written |
 | Google still reports "exceeds grid limits" | Rows are added once and the write is retried once |
+
+**Adding a column to an existing Table.** With `migrate: true` the library writes the new header cell and extends the table range to the right. It does not resend your existing column definitions (dropdowns that point at other tables, types), so they stay as they are. The new column gets the default column type in Sheets. If Google refuses, you get a `SCHEMA` error that names the columns and says what to do.
+
+For a Table you already use, the safest setup is: create every column yourself, then use
+
+```ts
+db.model("Transaction", schema, {
+  table: "Transaction", // the exact table name in your sheet
+  idColumn: "TransId",  // a column you already have, no extra id column
+  create: false,        // never create tabs or tables
+  migrate: false,       // never change the table, fail with a clear error instead
+});
+```
 
 Rows below a Table are not moved by the library. If other data sits right under your table, leave some free rows or move it.
 

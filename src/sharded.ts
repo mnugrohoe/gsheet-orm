@@ -329,6 +329,12 @@ export class ShardedModel<S extends Schema = Schema> {
 
       if (list.length > take.length) {
         const last = take[take.length - 1]!;
+        if (!last.id) {
+          throw new GSheetError(
+            "VALIDATION",
+            `[${this.name}] findPage needs an id on every row it pages through. Fill the id column, or set healIds: true.`,
+          );
+        }
         const cursor = encodeCursor({ o: order, ss: shard.spreadsheetId, k: this.key((last as Rec)[this.field]), id: last.id });
         return { rows, cursor, hasMore: true, readShards };
       }

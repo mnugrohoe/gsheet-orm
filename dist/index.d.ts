@@ -383,7 +383,13 @@ declare class TableDriver implements Driver {
     private createTable;
     private fetchMeta;
     private readHeader;
-    /** Best effort: extends the table range to the right and registers the new columns. */
+    /**
+     * Extends the table to the right to make room for new columns.
+     *
+     * Only the table `range` is updated. The definitions of the existing columns (dropdowns that point
+     * at other tables, column types, ...) are not sent back, because Google rejects some of them in the
+     * form it returns them (for example `=Person[Name]`). New columns get the default column type in Sheets.
+     */
     private addColumns;
     read(): Promise<RawRow[]>;
     private width;
